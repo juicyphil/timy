@@ -114,13 +114,13 @@ function clockHTML(d) {
 
       <div class="clock-buttons">
         ${d.status === 'off'
-          ? '<button class="clock-btn clock-btn--in" data-action="clock-in">&#9654; Kommen</button>'
+          ? '<button class="clock-btn clock-btn--in" data-action="clock-in">&#9654; Einstempeln</button>'
           : ''}
         ${d.status === 'working'
-          ? '<button class="clock-btn clock-btn--pause" data-action="pause-start">&#9201; Pause Start</button><button class="clock-btn clock-btn--out" data-action="clock-out">&#9632; Gehen</button>'
+          ? '<button class="clock-btn clock-btn--pause" data-action="pause-start">&#9201; Pause Start</button><button class="clock-btn clock-btn--out" data-action="clock-out">&#9632; Ausstempeln</button>'
           : ''}
         ${d.status === 'pausing'
-          ? '<button class="clock-btn clock-btn--resume" data-action="pause-end">&#9654; Pause Ende</button><button class="clock-btn clock-btn--out" data-action="clock-out">&#9632; Gehen</button>'
+          ? '<button class="clock-btn clock-btn--resume" data-action="pause-end">&#9654; Pause Ende</button><button class="clock-btn clock-btn--out" data-action="clock-out">&#9632; Ausstempeln</button>'
           : ''}
       </div>
 
