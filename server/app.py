@@ -72,7 +72,8 @@ def get_settings():
         "weekly_hours": float(s.get("weekly_hours", 40)),
         "vacation_days": float(s.get("vacation_days", 30)),
         "employee_name": s.get("employee_name", "Benutzer"),
-        "pause_duration": float(s.get("pause_duration", 30))
+        "pause_duration": float(s.get("pause_duration", 30)),
+        "friday_hours": float(s.get("friday_hours", 0))
     }
 
 @app.put("/api/settings")
@@ -82,6 +83,7 @@ def update_settings(settings: Settings):
     conn.execute("UPDATE settings SET value=? WHERE key='vacation_days'", (str(settings.vacation_days),))
     conn.execute("UPDATE settings SET value=? WHERE key='employee_name'", (settings.employee_name,))
     conn.execute("UPDATE settings SET value=? WHERE key='pause_duration'", (str(settings.pause_duration),))
+    conn.execute("UPDATE settings SET value=? WHERE key='friday_hours'", (str(settings.friday_hours),))
     conn.commit()
     conn.close()
     return {"success": True}
@@ -98,6 +100,7 @@ def get_today(uid: int = Query(1)):
 
     s = dict(conn.execute("SELECT key, value FROM settings").fetchall())
     weekly_hours = float(s.get("weekly_hours", 40))
+    friday_hours = float(s.get("friday_hours", 0))
 
     current_entry = dict(entries[-1]) if entries else None
     status = "off"
@@ -108,7 +111,7 @@ def get_today(uid: int = Query(1)):
 
     total_working = sum(calc_working_minutes(dict(e)) for e in entries)
     total_pause = sum(calc_pause_minutes(dict(e)) for e in entries)
-    target = get_target_minutes(today, weekly_hours)
+    target = get_target_minutes(today, weekly_hours, friday_hours)
     overtime = total_working - target
 
     conn.close()
@@ -284,6 +287,7 @@ def get_week(date: str = Query(...), uid: int = Query(1), max_date: str = Query(
     conn = get_connection()
     s = dict(conn.execute("SELECT key, value FROM settings").fetchall())
     weekly_hours = float(s.get("weekly_hours", 40))
+    friday_hours = float(s.get("friday_hours", 0))
 
     result = []
     for d in get_week_dates(date):
@@ -291,7 +295,7 @@ def get_week(date: str = Query(...), uid: int = Query(1), max_date: str = Query(
             "SELECT * FROM time_entries WHERE date=? AND user_id=? ORDER BY id", (d, uid)
         ).fetchall()
         working = sum(calc_working_minutes(dict(r)) for r in rows)
-        target = get_target_minutes(d, weekly_hours)
+        target = get_target_minutes(d, weekly_hours, friday_hours)
         dt = datetime.strptime(d, "%Y-%m-%d")
         count = max_date is None or d <= max_date
         result.append({
@@ -310,6 +314,7 @@ def get_month(year: int = Query(...), month: int = Query(...), uid: int = Query(
     conn = get_connection()
     s = dict(conn.execute("SELECT key, value FROM settings").fetchall())
     weekly_hours = float(s.get("weekly_hours", 40))
+    friday_hours = float(s.get("friday_hours", 0))
 
     last_day = get_month_range(year, month)
     end = f"{year:04d}-{month:02d}-{last_day:02d}"
@@ -333,7 +338,7 @@ def get_month(year: int = Query(...), month: int = Query(...), uid: int = Query(
             "SELECT * FROM time_entries WHERE date=? AND user_id=? ORDER BY id", (d, uid)
         ).fetchall()
         w = sum(calc_working_minutes(dict(r)) for r in rows)
-        t = get_target_minutes(d, weekly_hours)
+        t = get_target_minutes(d, weekly_hours, friday_hours)
         if d in absence_dates:
             t = 0
         p = sum(calc_pause_minutes(dict(r)) for r in rows)
@@ -395,6 +400,7 @@ def dashboard(year: int = Query(...), month: int = Query(...), uid: int = Query(
     s = dict(conn.execute("SELECT key, value FROM settings").fetchall())
     weekly_hours = float(s.get("weekly_hours", 40))
     vacation_days = float(s.get("vacation_days", 30))
+    friday_hours = float(s.get("friday_hours", 0))
 
     last_day = get_month_range(year, month)
     start = f"{year:04d}-{month:02d}-01"
@@ -412,7 +418,7 @@ def dashboard(year: int = Query(...), month: int = Query(...), uid: int = Query(
     ).fetchall()
     abs_list = [dict(a) for a in abs_rows]
     working_days = get_working_days_in_month(year, month, abs_list, max_day=calc_day)
-    target = get_adjusted_target_for_month(year, month, weekly_hours, abs_list, max_day=calc_day)
+    target = get_adjusted_target_for_month(year, month, weekly_hours, abs_list, max_day=calc_day, friday_hours=friday_hours)
     overtime = total_working - target
 
     sick_days = 0

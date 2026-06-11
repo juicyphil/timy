@@ -43,13 +43,18 @@ def calc_pause_minutes(entry):
         return max(0, pe - ps)
     return 0
 
-def get_target_minutes(date_str, weekly_hours):
+def get_target_minutes(date_str, weekly_hours, friday_hours=0):
     if not date_str:
         return 0
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
-        if dt.weekday() >= 5:
+        wd = dt.weekday()
+        if wd >= 5:
             return 0
+        if friday_hours > 0:
+            if wd == 4:
+                return int(friday_hours * 60)
+            return int(((weekly_hours - friday_hours) / 4) * 60)
         return int((weekly_hours / 5) * 60)
     except:
         return 0
@@ -81,16 +86,15 @@ def get_absence_dates_set(absences):
             pass
     return dates
 
-def get_adjusted_target_for_month(year, month, weekly_hours, absences, max_day=None):
+def get_adjusted_target_for_month(year, month, weekly_hours, absences, max_day=None, friday_hours=0):
     last_day = max_day if max_day is not None else get_month_range(year, month)
-    daily_target = int((weekly_hours / 5) * 60)
     absence_dates = get_absence_dates_set(absences)
     total = 0
     for day_num in range(1, last_day + 1):
         d = f"{year:04d}-{month:02d}-{day_num:02d}"
         if not is_weekday(d) or d in absence_dates:
             continue
-        total += daily_target
+        total += get_target_minutes(d, weekly_hours, friday_hours)
     return total
 
 def get_working_days_in_month(year, month, absences, max_day=None):

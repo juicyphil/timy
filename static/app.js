@@ -245,7 +245,14 @@ function loadDayEntries(date) {
     api('/api/settings')
   ]).then(([entries, settings]) => {
     const weekly = settings.weekly_hours;
-    const targetMin = (new Date(date + 'T12:00:00').getDay() % 6 === 0) ? 0 : Math.round(weekly / 5 * 60);
+    const fridayH = settings.friday_hours || 0;
+    const dow = new Date(date + 'T12:00:00').getDay();
+    let targetMin = 0;
+    if (dow !== 0 && dow !== 6) {
+      if (fridayH > 0 && dow === 5) targetMin = Math.round(fridayH * 60);
+      else if (fridayH > 0) targetMin = Math.round(((weekly - fridayH) / 4) * 60);
+      else targetMin = Math.round(weekly / 5 * 60);
+    }
 
     if (entries.length === 0) {
       host.innerHTML = `<div class="empty-state">Keine Eintr&auml;ge f&uuml;r diesen Tag</div>`;
@@ -794,6 +801,10 @@ function renderSettings(host) {
             <input type="number" id="set-pause" value="${s.pause_duration}" step="5" min="0" max="120">
           </div>
           <div class="form-group">
+            <label>Stunden Freitag</label>
+            <input type="number" id="set-friday" value="${s.friday_hours}" step="0.5" min="0" max="12" placeholder="0 = wie andere Tage">
+          </div>
+          <div class="form-group">
             <label>&nbsp;</label>
             <button class="btn btn-primary" id="set-save">Speichern</button>
           </div>
@@ -814,10 +825,11 @@ function renderSettings(host) {
       const hours = parseFloat($('#set-hours').value);
       const vacation = parseFloat($('#set-vacation').value);
       const pause = parseFloat($('#set-pause').value);
+      const friday = parseFloat($('#set-friday').value) || 0;
       if (!name || !hours || !vacation) { alert('Alle Felder ausfüllen'); return; }
       api('/api/settings', {
         method: 'PUT',
-        body: JSON.stringify({ employee_name: name, weekly_hours: hours, vacation_days: vacation, pause_duration: pause })
+        body: JSON.stringify({ employee_name: name, weekly_hours: hours, vacation_days: vacation, pause_duration: pause, friday_hours: friday })
       }).then(() => { alert('Gespeichert'); }).catch(err => alert(err.message));
     });
 
