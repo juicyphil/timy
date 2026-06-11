@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>timy – Zeiterfassung</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1><span class="logo-icon">&#9200;</span> timy</h1>
+      <nav>
+        <button class="nav-btn active" data-view="clock">Stempeln</button>
+        <button class="nav-btn" data-view="overview">&#128203; &Uuml;bersicht</button>
+        <button class="nav-btn" data-view="absences">&#128197; Abwesenheit</button>
+        <button class="nav-btn" data-view="dashboard">&#128202; Dashboard</button>
+        <button class="nav-btn" data-view="export">&#128229; Export</button>
+        <button class="nav-btn nav-btn--darkmode" id="darkmode-toggle" title="Dark Mode umschalten">&#127769;</button>
+        <button class="nav-btn nav-btn--settings" data-view="settings">&#9881;</button>
+      </nav>
+    </div>
+  </header>
+  <main id="content"></main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

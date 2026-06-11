@@ -1,0 +1,8 @@
+services:
+  timy:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
