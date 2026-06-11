@@ -71,7 +71,8 @@ def get_settings():
     return {
         "weekly_hours": float(s.get("weekly_hours", 40)),
         "vacation_days": float(s.get("vacation_days", 30)),
-        "employee_name": s.get("employee_name", "Benutzer")
+        "employee_name": s.get("employee_name", "Benutzer"),
+        "pause_duration": float(s.get("pause_duration", 30))
     }
 
 @app.put("/api/settings")
@@ -80,6 +81,7 @@ def update_settings(settings: Settings):
     conn.execute("UPDATE settings SET value=? WHERE key='weekly_hours'", (str(settings.weekly_hours),))
     conn.execute("UPDATE settings SET value=? WHERE key='vacation_days'", (str(settings.vacation_days),))
     conn.execute("UPDATE settings SET value=? WHERE key='employee_name'", (settings.employee_name,))
+    conn.execute("UPDATE settings SET value=? WHERE key='pause_duration'", (str(settings.pause_duration),))
     conn.commit()
     conn.close()
     return {"success": True}
@@ -158,6 +160,22 @@ def clock_out(uid: int = Query(1)):
 
     if entry["pause_start"] and not entry["pause_end"]:
         conn.execute("UPDATE time_entries SET pause_end=? WHERE id=?", (time_str, entry["id"]))
+
+    if not entry["pause_start"]:
+        s = dict(conn.execute("SELECT key, value FROM settings").fetchall())
+        pause_min = int(float(s.get("pause_duration", 30)))
+        if pause_min > 0:
+            ci = parse_time(entry["clock_in"])
+            co = parse_time(time_str)
+            if ci is not None and co is not None:
+                mid = ci + (co - ci) // 2
+                ps_h, ps_m = divmod(mid, 60)
+                pe_mid = mid + pause_min
+                pe_h, pe_m = divmod(pe_mid, 60)
+                pause_start = f"{ps_h:02d}:{ps_m:02d}"
+                pause_end = f"{pe_h:02d}:{pe_m:02d}"
+                conn.execute("UPDATE time_entries SET pause_start=?, pause_end=? WHERE id=?",
+                             (pause_start, pause_end, entry["id"]))
 
     conn.execute("UPDATE time_entries SET clock_out=? WHERE id=?", (time_str, entry["id"]))
     conn.commit()

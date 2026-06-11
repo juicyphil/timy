@@ -21,6 +21,7 @@ class Settings(BaseModel):
     weekly_hours: float
     vacation_days: float
     employee_name: str
+    pause_duration: float = 30
 
 class LoginRequest(BaseModel):
     name: str

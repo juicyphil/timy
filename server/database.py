@@ -50,7 +50,8 @@ def init_db():
     defaults = {
         "weekly_hours": "40",
         "vacation_days": "30",
-        "employee_name": "Benutzer"
+        "employee_name": "Benutzer",
+        "pause_duration": "30"
     }
     for k, v in defaults.items():
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))

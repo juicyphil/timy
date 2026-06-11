@@ -790,6 +790,10 @@ function renderSettings(host) {
             <input type="number" id="set-vacation" value="${s.vacation_days}" step="0.5" min="0" max="50">
           </div>
           <div class="form-group">
+            <label>Pausendauer (Min.)</label>
+            <input type="number" id="set-pause" value="${s.pause_duration}" step="5" min="0" max="120">
+          </div>
+          <div class="form-group">
             <label>&nbsp;</label>
             <button class="btn btn-primary" id="set-save">Speichern</button>
           </div>
@@ -809,10 +813,11 @@ function renderSettings(host) {
       const name = $('#set-name').value;
       const hours = parseFloat($('#set-hours').value);
       const vacation = parseFloat($('#set-vacation').value);
+      const pause = parseFloat($('#set-pause').value);
       if (!name || !hours || !vacation) { alert('Alle Felder ausfüllen'); return; }
       api('/api/settings', {
         method: 'PUT',
-        body: JSON.stringify({ employee_name: name, weekly_hours: hours, vacation_days: vacation })
+        body: JSON.stringify({ employee_name: name, weekly_hours: hours, vacation_days: vacation, pause_duration: pause })
       }).then(() => { alert('Gespeichert'); }).catch(err => alert(err.message));
     });
 
