@@ -171,7 +171,7 @@ function bindClockButtons() {
     btn.addEventListener('click', () => {
       const action = btn.dataset.action;
       btn.disabled = true;
-      api('/api/' + action.replace('-', '/'), { method: 'POST' })
+      api('/api/' + action, { method: 'POST' })
         .then(() => refreshToday())
         .then(d => {
           state.today = d;
