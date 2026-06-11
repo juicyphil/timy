@@ -270,7 +270,7 @@ function loadDayEntries(date) {
         <td>${fmtMinShort(work)}</td>
         <td>${fmtMinShort(targetMin)}</td>
         <td class="${otCls}">${ot >= 0 ? '+' : ''}${fmtMinShort(ot)}</td>
-        <td><button class="btn btn-ghost btn-sm" onclick="editEntry(${e.id}, '${e.date}')">&#9998;</button></td>
+        <td><button class="btn btn-ghost btn-sm" onclick="editEntry(${e.id}, '${e.date}')">&#9998;</button><button class="btn btn-red btn-sm" onclick="deleteEntry(${e.id}, '${e.date}')">&#128465;</button></td>
       </tr>`;
     });
 
@@ -966,6 +966,14 @@ function editEntry(id, date) {
       }).catch(err => alert(err.message));
     });
   });
+}
+
+async function deleteEntry(id, date) {
+  const confirmed = await showConfirmModal('Eintrag wirklich l\u00f6schen?');
+  if (!confirmed) return;
+  api('/api/entries/' + id, { method: 'DELETE' }).then(() => {
+    if (state.view === 'overview') renderView('overview');
+  }).catch(err => alert(err.message));
 }
 
 // ─── Login ──────────────────────────────────────────────
