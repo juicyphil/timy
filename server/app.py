@@ -7,12 +7,12 @@ from pathlib import Path
 from datetime import datetime
 
 from .database import init_db, get_connection
-from .models import TimeEntry, Absence, Settings, LoginRequest, CreateUser
+from .models import TimeEntry, Absence, Settings, LoginRequest, CreateUser, AbsenceNoteUpdate
 from .calc import (
     parse_time, format_minutes, format_minutes_short,
     calc_working_minutes, calc_pause_minutes,
     get_target_minutes, get_week_dates, get_month_range, is_weekday,
-    get_absence_dates_set, get_adjusted_target_for_month,
+    get_absence_dates_set, get_absence_info_by_date, get_adjusted_target_for_month,
     get_working_days_in_month, DAYS
 )
 from .export import export_times_csv, export_absences_csv
@@ -44,7 +44,7 @@ def login(data: LoginRequest):
     ph = hashlib.sha256(data.pin.encode()).hexdigest()
     if user["pin_hash"] != ph:
         raise HTTPException(401, "Falsche PIN")
-    return {"success": True, "user": {"id": user["id"], "name": user["name"]}}
+    return {"success": True, "user": {"id": user["id"], "name": user["name"], "role": user["role"]}}
 
 @app.post("/api/users")
 def create_user(data: CreateUser):
@@ -53,12 +53,173 @@ def create_user(data: CreateUser):
         ph = hashlib.sha256(data.pin.encode()).hexdigest()
         conn.execute("INSERT INTO users (name, pin_hash) VALUES (?, ?)", (data.name, ph))
         conn.commit()
-        u = dict(conn.execute("SELECT id, name FROM users WHERE name=?", (data.name,)).fetchone())
+        u = dict(conn.execute("SELECT id, name, role FROM users WHERE name=?", (data.name,)).fetchone())
         conn.close()
         return {"success": True, "user": u}
     except Exception:
         conn.close()
         raise HTTPException(400, "Benutzer existiert bereits")
+
+@app.get("/api/users")
+def list_users(uid: int = Query(1)):
+    conn = get_connection()
+    user = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+    if not user or user["role"] != "ausbilder":
+        conn.close()
+        raise HTTPException(403, "Keine Berechtigung")
+    users = conn.execute("SELECT id, name, role, created_at FROM users ORDER BY name").fetchall()
+    conn.close()
+    return [dict(u) for u in users]
+
+@app.get("/api/ausbilder/overview")
+def ausbilder_overview(year: int = Query(...), month: int = Query(...), uid: int = Query(1), max_day: int = Query(None)):
+    conn = get_connection()
+    user = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+    if not user or user["role"] != "ausbilder":
+        conn.close()
+        raise HTTPException(403, "Keine Berechtigung")
+    
+    users = conn.execute("SELECT id, name FROM users WHERE role != 'ausbilder' ORDER BY name").fetchall()
+    s = dict(conn.execute("SELECT key, value FROM settings").fetchall())
+    weekly_hours = float(s.get("weekly_hours", 40))
+    friday_hours = float(s.get("friday_hours", 0))
+    last_day = get_month_range(year, month)
+    calc_day = min(last_day, max_day) if max_day else last_day
+    start = f"{year:04d}-{month:02d}-01"
+    end = f"{year:04d}-{month:02d}-{calc_day:02d}"
+    
+    result = []
+    for u in users:
+        uid_u = u["id"]
+        rows = conn.execute(
+            "SELECT * FROM time_entries WHERE date BETWEEN ? AND ? AND user_id=? ORDER BY date",
+            (start, end, uid_u)
+        ).fetchall()
+        total_working = sum(calc_working_minutes(dict(r)) for r in rows)
+        
+        abs_rows = conn.execute(
+            "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND user_id=?",
+            (f"{year:04d}-{month:02d}-{last_day:02d}", start, uid_u)
+        ).fetchall()
+        abs_list = [dict(a) for a in abs_rows]
+        working_days = get_working_days_in_month(year, month, abs_list, max_day=calc_day)
+        target = get_adjusted_target_for_month(year, month, weekly_hours, abs_list, max_day=calc_day, friday_hours=friday_hours)
+        overtime = total_working - target
+        
+        result.append({
+            "user_id": uid_u,
+            "name": u["name"],
+            "working_minutes": total_working,
+            "target_minutes": target,
+            "overtime_minutes": overtime,
+            "working_days": working_days,
+            "absence_count": len(abs_list)
+        })
+    
+    conn.close()
+    return {"year": year, "month": month, "users": result}
+
+@app.get("/api/ausbilder/day")
+def ausbilder_day(date: str = Query(...), uid: int = Query(1)):
+    conn = get_connection()
+    user = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+    if not user or user["role"] != "ausbilder":
+        conn.close()
+        raise HTTPException(403, "Keine Berechtigung")
+    
+    users = conn.execute("SELECT id, name FROM users WHERE role != 'ausbilder' ORDER BY name").fetchall()
+    s = dict(conn.execute("SELECT key, value FROM settings").fetchall())
+    weekly_hours = float(s.get("weekly_hours", 40))
+    friday_hours = float(s.get("friday_hours", 0))
+    target = get_target_minutes(date, weekly_hours, friday_hours)
+    
+    result = []
+    for u in users:
+        uid_u = u["id"]
+        rows = conn.execute(
+            "SELECT * FROM time_entries WHERE date=? AND user_id=? ORDER BY id",
+            (date, uid_u)
+        ).fetchall()
+        entries = [dict(r) for r in rows]
+        working = sum(calc_working_minutes(dict(r)) for r in rows)
+        pause = sum(calc_pause_minutes(dict(r)) for r in rows)
+        
+        abs_row = conn.execute(
+            "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND user_id=? LIMIT 1",
+            (date, date, uid_u)
+        ).fetchone()
+        absence = dict(abs_row) if abs_row else None
+        
+        result.append({
+            "user_id": uid_u,
+            "name": u["name"],
+            "entries": entries,
+            "working_minutes": working,
+            "pause_minutes": pause,
+            "target_minutes": target,
+            "overtime_minutes": working - target,
+            "absence": absence
+        })
+    
+    conn.close()
+    return {"date": date, "users": result}
+
+@app.get("/api/ausbilder/year")
+def ausbilder_year(year: int = Query(...), uid: int = Query(1)):
+    conn = get_connection()
+    user = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+    if not user or user["role"] != "ausbilder":
+        conn.close()
+        raise HTTPException(403, "Keine Berechtigung")
+    
+    users = conn.execute("SELECT id, name FROM users WHERE role != 'ausbilder' ORDER BY name").fetchall()
+    s = dict(conn.execute("SELECT key, value FROM settings").fetchall())
+    weekly_hours = float(s.get("weekly_hours", 40))
+    friday_hours = float(s.get("friday_hours", 0))
+    
+    now = datetime.now()
+    is_current_year = year == now.year
+    
+    result = []
+    for u in users:
+        uid_u = u["id"]
+        total_working = 0
+        total_target = 0
+        total_absence_days = 0
+        
+        max_month = now.month if is_current_year else 12
+        
+        for month in range(1, max_month + 1):
+            last_day = get_month_range(year, month)
+            max_day = now.day if (is_current_year and month == now.month) else last_day
+            start = f"{year:04d}-{month:02d}-01"
+            end = f"{year:04d}-{month:02d}-{max_day:02d}"
+            
+            rows = conn.execute(
+                "SELECT * FROM time_entries WHERE date BETWEEN ? AND ? AND user_id=? ORDER BY date",
+                (start, end, uid_u)
+            ).fetchall()
+            total_working += sum(calc_working_minutes(dict(r)) for r in rows)
+            
+            abs_rows = conn.execute(
+                "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND user_id=?",
+                (f"{year:04d}-{month:02d}-{last_day:02d}", start, uid_u)
+            ).fetchall()
+            abs_list = [dict(a) for a in abs_rows]
+            total_target += get_adjusted_target_for_month(year, month, weekly_hours, abs_list, max_day=max_day, friday_hours=friday_hours)
+            total_absence_days += len(abs_list)
+        
+        result.append({
+            "user_id": uid_u,
+            "name": u["name"],
+            "working_minutes": total_working,
+            "target_minutes": total_target,
+            "overtime_minutes": total_working - total_target,
+            "absence_count": total_absence_days
+        })
+    
+    conn.close()
+    return {"year": year, "users": result}
 
 # ─── Settings ───────────────────────────────────────────────────────────
 
@@ -325,7 +486,7 @@ def get_month(year: int = Query(...), month: int = Query(...), uid: int = Query(
         (end, start, uid)
     ).fetchall()
     absences_list = [dict(a) for a in absences]
-    absence_dates = get_absence_dates_set(absences_list)
+    absence_info = get_absence_info_by_date(absences_list)
 
     count_day = min(last_day, max_day) if max_day else last_day
 
@@ -339,8 +500,12 @@ def get_month(year: int = Query(...), month: int = Query(...), uid: int = Query(
         ).fetchall()
         w = sum(calc_working_minutes(dict(r)) for r in rows)
         t = get_target_minutes(d, weekly_hours, friday_hours)
-        if d in absence_dates:
-            t = 0
+        if d in absence_info:
+            a = absence_info[d]
+            if a["type"] == "ueberstunden_abbau":
+                pass
+            else:
+                t = 0
         p = sum(calc_pause_minutes(dict(r)) for r in rows)
         dt = datetime.strptime(d, "%Y-%m-%d")
         if day_num <= count_day:
@@ -391,6 +556,31 @@ def delete_absence(absence_id: int, uid: int = Query(1)):
     conn.commit()
     conn.close()
     return {"success": True}
+
+@app.get("/api/absence-for-date")
+def get_absence_for_date(date: str = Query(...), uid: int = Query(1)):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND user_id=? LIMIT 1",
+        (date, date, uid)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+@app.put("/api/absences/{absence_id}/note")
+def update_absence_note(absence_id: int, data: AbsenceNoteUpdate, uid: int = Query(1)):
+    conn = get_connection()
+    cur = conn.execute(
+        "UPDATE absences SET note=? WHERE id=? AND user_id=?",
+        (data.note, absence_id, uid)
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(404)
+    a = dict(conn.execute("SELECT * FROM absences WHERE id=?", (absence_id,)).fetchone())
+    conn.close()
+    return a
 
 # ─── Dashboard ──────────────────────────────────────────────────────────
 

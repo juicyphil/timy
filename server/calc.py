@@ -86,23 +86,49 @@ def get_absence_dates_set(absences):
             pass
     return dates
 
+def get_absence_info_by_date(absences):
+    result = {}
+    for a in absences:
+        try:
+            sd = datetime.strptime(a["start_date"], "%Y-%m-%d")
+            ed = datetime.strptime(a["end_date"], "%Y-%m-%d")
+            d = sd
+            while d <= ed:
+                ds = d.strftime("%Y-%m-%d")
+                result[ds] = {"type": a["type"], "days": float(a.get("days", 1.0))}
+                d += timedelta(days=1)
+        except (KeyError, ValueError):
+            pass
+    return result
+
 def get_adjusted_target_for_month(year, month, weekly_hours, absences, max_day=None, friday_hours=0):
     last_day = max_day if max_day is not None else get_month_range(year, month)
-    absence_dates = get_absence_dates_set(absences)
+    absence_info = get_absence_info_by_date(absences)
     total = 0
     for day_num in range(1, last_day + 1):
         d = f"{year:04d}-{month:02d}-{day_num:02d}"
-        if not is_weekday(d) or d in absence_dates:
+        if not is_weekday(d):
             continue
-        total += get_target_minutes(d, weekly_hours, friday_hours)
+        if d in absence_info:
+            a = absence_info[d]
+            if a["type"] == "ueberstunden_abbau":
+                total += get_target_minutes(d, weekly_hours, friday_hours)
+            else:
+                continue
+        else:
+            total += get_target_minutes(d, weekly_hours, friday_hours)
     return total
 
 def get_working_days_in_month(year, month, absences, max_day=None):
     last_day = max_day if max_day is not None else get_month_range(year, month)
-    absence_dates = get_absence_dates_set(absences)
+    absence_info = get_absence_info_by_date(absences)
     count = 0
     for day_num in range(1, last_day + 1):
         d = f"{year:04d}-{month:02d}-{day_num:02d}"
-        if is_weekday(d) and d not in absence_dates:
-            count += 1
+        if is_weekday(d):
+            if d in absence_info:
+                if absence_info[d]["type"] == "ueberstunden_abbau":
+                    count += 1
+            else:
+                count += 1
     return count

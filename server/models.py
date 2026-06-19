@@ -31,3 +31,6 @@ class LoginRequest(BaseModel):
 class CreateUser(BaseModel):
     name: str
     pin: str
+
+class AbsenceNoteUpdate(BaseModel):
+    note: str

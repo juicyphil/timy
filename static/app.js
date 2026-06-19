@@ -3,7 +3,8 @@ const state = {
   view: 'clock',
   today: null,
   settings: null,
-  liveClock: null
+  liveClock: null,
+  userRole: null
 };
 let navInitialized = false;
 
@@ -70,6 +71,7 @@ function renderView(view) {
   else if (view === 'dashboard') renderDashboard(content);
   else if (view === 'export') renderExport(content);
   else if (view === 'settings') renderSettings(content);
+  else if (view === 'ausbilder') renderAusbilder(content);
 }
 
 // ─── API: today + clock actions ────────────────────────
@@ -242,8 +244,9 @@ function loadDayEntries(date) {
 
   Promise.all([
     api('/api/entries?date=' + date),
-    api('/api/settings')
-  ]).then(([entries, settings]) => {
+    api('/api/settings'),
+    api('/api/absence-for-date?date=' + date)
+  ]).then(([entries, settings, absence]) => {
     const weekly = settings.weekly_hours;
     const fridayH = settings.friday_hours || 0;
     const dow = new Date(date + 'T12:00:00').getDay();
@@ -254,43 +257,84 @@ function loadDayEntries(date) {
       else targetMin = Math.round(weekly / 5 * 60);
     }
 
-    if (entries.length === 0) {
+    const typeNames = { vacation: 'Urlaub', sick: 'Krankheit', holiday: 'Feiertag', bbs: 'BBS', ueberstunden_abbau: 'Überst. Abbau', other: 'Sonstige' };
+    const typeClasses = { vacation: 'absence-badge--vacation', sick: 'absence-badge--sick', holiday: 'absence-badge--holiday', bbs: 'absence-badge--bbs', ueberstunden_abbau: 'absence-badge--ueberstunden', other: 'absence-badge--other' };
+
+    let html = '';
+
+    if (absence) {
+      const badgeCls = typeClasses[absence.type] || 'absence-badge--other';
+      html += `<div class="absence-card">
+        <div class="absence-header">
+          <span class="absence-badge ${badgeCls}">${typeNames[absence.type] || absence.type}</span>
+          <span class="text-secondary">${absence.start_date}${absence.start_date !== absence.end_date ? ' &ndash; ' + absence.end_date : ''} (${absence.days} Tag${absence.days !== 1 ? 'e' : ''})</span>
+        </div>
+        <div class="absence-note-area">
+          <label class="absence-note-label">Kommentar</label>
+          <div class="absence-note-row">
+            <textarea id="day-absence-note" class="absence-note-input" placeholder="Kommentar hinzuf&uuml;gen...">${absence.note || ''}</textarea>
+            <button class="btn btn-primary btn-sm" id="day-note-save">Speichern</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    if (entries.length === 0 && !absence) {
       host.innerHTML = `<div class="empty-state">Keine Eintr&auml;ge f&uuml;r diesen Tag</div>`;
       return;
     }
 
-    let total = 0, totalPause = 0;
-    let html = `<div class="table-wrap"><table>
-      <tr><th>Kommen</th><th>Gehen</th><th>Pause</th><th>Zeit</th><th>Soll</th><th>&Uuml;berstd.</th><th></th></tr>`;
+    if (entries.length > 0) {
+      let total = 0, totalPause = 0;
+      html += `<div class="table-wrap"><table>
+        <tr><th>Kommen</th><th>Gehen</th><th>Pause</th><th>Zeit</th><th>Soll</th><th>&Uuml;berstd.</th><th></th></tr>`;
 
-    entries.forEach(e => {
-      const work = calcWorkMin(e);
-      const pause = calcPauseMin(e);
-      total += work;
-      totalPause += pause;
-      const ot = work - targetMin;
-      const otCls = ot >= 0 ? 'stat-value--positive' : 'stat-value--negative';
-      html += `<tr>
-        <td>${e.clock_in || '-'}</td>
-        <td>${e.clock_out || '-'}</td>
-        <td>${e.pause_start && e.pause_end ? fmtMinShort(pause) : '-'}</td>
-        <td>${fmtMinShort(work)}</td>
-        <td>${fmtMinShort(targetMin)}</td>
-        <td class="${otCls}">${ot >= 0 ? '+' : ''}${fmtMinShort(ot)}</td>
-        <td><button class="btn btn-ghost btn-sm" onclick="editEntry(${e.id}, '${e.date}')">&#9998;</button><button class="btn btn-red btn-sm" onclick="deleteEntry(${e.id}, '${e.date}')">&#128465;</button></td>
+      entries.forEach(e => {
+        const work = calcWorkMin(e);
+        const pause = calcPauseMin(e);
+        total += work;
+        totalPause += pause;
+        const ot = work - targetMin;
+        const otCls = ot >= 0 ? 'stat-value--positive' : 'stat-value--negative';
+        html += `<tr>
+          <td>${e.clock_in || '-'}</td>
+          <td>${e.clock_out || '-'}</td>
+          <td>${e.pause_start && e.pause_end ? fmtMinShort(pause) : '-'}</td>
+          <td>${fmtMinShort(work)}</td>
+          <td>${fmtMinShort(targetMin)}</td>
+          <td class="${otCls}">${ot >= 0 ? '+' : ''}${fmtMinShort(ot)}</td>
+          <td><button class="btn btn-ghost btn-sm" onclick="editEntry(${e.id}, '${e.date}')">&#9998;</button><button class="btn btn-red btn-sm" onclick="deleteEntry(${e.id}, '${e.date}')">&#128465;</button></td>
+        </tr>`;
+      });
+
+      const totalOt = total - (targetMin * entries.length);
+      html += `<tr style="font-weight:600">
+        <td></td><td></td><td>Summe Pause: ${fmtMinShort(totalPause)}</td>
+        <td>${fmtMinShort(total)}</td>
+        <td>${fmtMinShort(targetMin * entries.length)}</td>
+        <td class="${totalOt >= 0 ? 'stat-value--positive' : 'stat-value--negative'}">${totalOt >= 0 ? '+' : ''}${fmtMinShort(totalOt)}</td>
+        <td></td>
       </tr>`;
-    });
+      html += '</table></div>';
+    }
 
-    const totalOt = total - (targetMin * entries.length);
-    html += `<tr style="font-weight:600">
-      <td></td><td></td><td>Summe Pause: ${fmtMinShort(totalPause)}</td>
-      <td>${fmtMinShort(total)}</td>
-      <td>${fmtMinShort(targetMin * entries.length)}</td>
-      <td class="${totalOt >= 0 ? 'stat-value--positive' : 'stat-value--negative'}">${totalOt >= 0 ? '+' : ''}${fmtMinShort(totalOt)}</td>
-      <td></td>
-    </tr>`;
-    html += '</table></div>';
     host.innerHTML = html;
+
+    if (absence) {
+      const saveBtn = $('#day-note-save');
+      if (saveBtn) {
+        saveBtn.addEventListener('click', () => {
+          const note = $('#day-absence-note').value;
+          api('/api/absences/' + absence.id + '/note', {
+            method: 'PUT',
+            body: JSON.stringify({ note })
+          }).then(() => {
+            saveBtn.textContent = 'Gespeichert!';
+            setTimeout(() => { saveBtn.textContent = 'Speichern'; }, 1500);
+          }).catch(err => alert(err.message));
+        });
+      }
+    }
   }).catch(err => { host.innerHTML = `<div class="empty-state">Fehler: ${err.message}</div>`; });
 }
 
@@ -437,16 +481,21 @@ function loadMonth(year, month) {
     const offset = (firstDay + 6) % 7; // 0=Mon
     const today = todayStr();
 
-    const typeNames = { vacation: 'Urlaub', sick: 'Krank', holiday: 'Feiertag', bbs: 'BBS', other: 'Sonstige' };
+    const typeNames = { vacation: 'Urlaub', sick: 'Krank', holiday: 'Feiertag', bbs: 'BBS', ueberstunden_abbau: 'Überst. Abbau', other: 'Sonstige' };
 
     // Absence lookup
     const absMap = {};
+    const absInfoMap = {};
     data.absences.forEach(a => {
       const sd = new Date(a.start_date + 'T12:00:00');
       const ed = new Date(a.end_date + 'T12:00:00');
       for (let d = new Date(sd); d <= ed; d.setDate(d.getDate() + 1)) {
         const ds = d.toISOString().slice(0, 10);
         absMap[ds] = a.type;
+        let tooltip = typeNames[a.type] || a.type;
+        if (a.start_date !== a.end_date) tooltip += ` (${a.start_date} – ${a.end_date})`;
+        if (a.note) tooltip += `: ${a.note}`;
+        absInfoMap[ds] = tooltip;
       }
     });
 
@@ -477,7 +526,8 @@ function loadMonth(year, month) {
       } else if (absMap[ds]) {
         cls = absMap[ds] === 'vacation' ? 'month-day--vacation' :
               absMap[ds] === 'sick' ? 'month-day--sick' :
-              absMap[ds] === 'bbs' ? 'month-day--bbs' : 'month-day--partial';
+              absMap[ds] === 'bbs' ? 'month-day--bbs' :
+              absMap[ds] === 'ueberstunden_abbau' ? 'month-day--ueberstunden_abbau' : 'month-day--partial';
         info = typeNames[absMap[ds]] || '';
       } else if (day.working_minutes > 0 && day.working_minutes >= day.target_minutes) {
         cls = 'month-day--worked';
@@ -489,7 +539,9 @@ function loadMonth(year, month) {
 
       if (ds === today) cls += ' month-day--today';
 
-      html += `<div class="month-day ${cls}">
+      const tooltip = absInfoMap[ds] ? ` title="${absInfoMap[ds].replace(/"/g, '&quot;')}"` : '';
+
+      html += `<div class="month-day ${cls}"${tooltip}>
         <div class="month-day-num">${d}</div>
         <div class="month-day-info">${info}</div>
       </div>`;
@@ -521,6 +573,7 @@ function renderAbsences(host) {
             <option value="sick">Krankheit</option>
             <option value="holiday">Feiertag</option>
             <option value="bbs">BBS</option>
+            <option value="ueberstunden_abbau">&Uuml;berstunden Abbau</option>
             <option value="other">Sonstige</option>
           </select>
         </div>
@@ -532,12 +585,16 @@ function renderAbsences(host) {
           <label>Ende</label>
           <input type="date" id="abs-end">
         </div>
-        <div class="form-group">
+        <div class="form-group" id="abs-half-group">
           <label>Halbe Tage</label>
           <select id="abs-half">
             <option value="1">Nein (ganze Tage)</option>
             <option value="0.5">Ja (halbe Tage)</option>
           </select>
+        </div>
+        <div class="form-group" id="abs-hours-group" style="display:none">
+          <label>Stunden</label>
+          <input type="text" id="abs-hours" placeholder="z.B. 6 oder 8:30">
         </div>
         <div class="form-group">
           <label>Notiz</label>
@@ -559,29 +616,54 @@ function renderAbsences(host) {
   $('#abs-end').value = today;
   $('#abs-half').value = '1';
 
+  const typeSelect = $('#abs-type');
+  const toggleTypeFields = () => {
+    const isUeberstunden = typeSelect.value === 'ueberstunden_abbau';
+    $('#abs-half-group').style.display = isUeberstunden ? 'none' : '';
+    $('#abs-hours-group').style.display = isUeberstunden ? '' : 'none';
+  };
+  typeSelect.addEventListener('change', toggleTypeFields);
+  toggleTypeFields();
+
+  function parseHours(str) {
+    if (!str) return null;
+    str = str.trim().replace(',', '.');
+    if (str.includes(':')) {
+      const [h, m] = str.split(':');
+      return parseInt(h) + parseInt(m) / 60;
+    }
+    return parseFloat(str);
+  }
+
   $('#abs-submit').addEventListener('click', () => {
-    const type = $('#abs-type').value;
+    const type = typeSelect.value;
     const start = $('#abs-start').value;
     const end = $('#abs-end').value;
-    const half = parseFloat($('#abs-half').value);
     const note = $('#abs-note').value;
 
     if (!start || !end) { alert('Start- und Enddatum auswählen'); return; }
 
-    // Calculate days
-    const sd = new Date(start + 'T12:00:00');
-    const ed = new Date(end + 'T12:00:00');
-    let days = 0;
-    for (let d = new Date(sd); d <= ed; d.setDate(d.getDate() + 1)) {
-      if (d.getDay() !== 0 && d.getDay() !== 6) days++;
+    let days;
+    if (type === 'ueberstunden_abbau') {
+      days = parseHours($('#abs-hours').value);
+      if (!days || days <= 0) { alert('Stunden eingeben (z.B. 6 oder 8:30)'); return; }
+    } else {
+      const half = parseFloat($('#abs-half').value);
+      const sd = new Date(start + 'T12:00:00');
+      const ed = new Date(end + 'T12:00:00');
+      days = 0;
+      for (let d = new Date(sd); d <= ed; d.setDate(d.getDate() + 1)) {
+        if (d.getDay() !== 0 && d.getDay() !== 6) days++;
+      }
+      if (half === 0.5) days = Math.max(0.5, days * 0.5);
     }
-    if (half === 0.5) days = Math.max(0.5, days * 0.5);
 
     api('/api/absences', {
       method: 'POST',
       body: JSON.stringify({ type, start_date: start, end_date: end, days, note })
     }).then(() => {
       $('#abs-note').value = '';
+      if (type === 'ueberstunden_abbau') $('#abs-hours').value = '';
       loadAbsencesList();
     }).catch(err => alert(err.message));
   });
@@ -594,7 +676,7 @@ function loadAbsencesList() {
   if (!host) return;
 
   api('/api/absences').then(absences => {
-    const typeNames = { vacation: 'Urlaub', sick: 'Krankheit', holiday: 'Feiertag', bbs: 'BBS', other: 'Sonstige' };
+    const typeNames = { vacation: 'Urlaub', sick: 'Krankheit', holiday: 'Feiertag', bbs: 'BBS', ueberstunden_abbau: 'Überst. Abbau', other: 'Sonstige' };
 
     if (absences.length === 0) {
       host.innerHTML = '<div class="empty-state">Keine Abwesenheiten eingetragen</div>';
@@ -836,6 +918,7 @@ function renderSettings(host) {
     $('#set-logout').addEventListener('click', () => {
       localStorage.removeItem('timy_user_id');
       localStorage.removeItem('timy_user_name');
+      localStorage.removeItem('timy_user_role');
       $('header').classList.add('hidden');
       navInitialized = false;
       renderLogin();
@@ -988,6 +1071,196 @@ async function deleteEntry(id, date) {
   }).catch(err => alert(err.message));
 }
 
+// ─── Ausbilder View ──────────────────────────────────────
+function renderAusbilder(host) {
+  const now = new Date();
+  const y = state._ausbilderYear || now.getFullYear();
+  const m = state._ausbilderMonth || (now.getMonth() + 1);
+  const d = state._ausbilderDay || todayStr();
+
+  host.innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <h2>&#128105;&#8205;&#127979; Ausbilder &Uuml;bersicht</h2>
+      </div>
+      <div class="sub-nav">
+        <button class="sub-nav-btn active" data-aus="day">Tag</button>
+        <button class="sub-nav-btn" data-aus="month">Monat</button>
+        <button class="sub-nav-btn" data-aus="year">Jahr</button>
+      </div>
+      <div id="aus-filter"></div>
+      <div id="aus-content"></div>
+    </div>
+  `;
+
+  host.querySelectorAll('[data-aus]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      host.querySelectorAll('[data-aus]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderAusbilderSub(btn.dataset.aus);
+    });
+  });
+
+  renderAusbilderSub('day');
+}
+
+function renderAusbilderSub(sub) {
+  const filter = $('#aus-filter');
+  const content = $('#aus-content');
+  if (!filter || !content) return;
+
+  const now = new Date();
+  const y = state._ausbilderYear || now.getFullYear();
+  const m = state._ausbilderMonth || (now.getMonth() + 1);
+  const d = state._ausbilderDay || todayStr();
+
+  if (sub === 'day') {
+    filter.innerHTML = `<div class="form-row" style="margin-bottom:0"><div class="form-group"><label>Datum</label><input type="date" id="aus-day-input" value="${d}"></div></div>`;
+    $('#aus-day-input').addEventListener('change', e => {
+      state._ausbilderDay = e.target.value;
+      loadAusbilderDay(e.target.value);
+    });
+    loadAusbilderDay(d);
+  } else if (sub === 'month') {
+    filter.innerHTML = `<div class="form-row" style="margin-bottom:0"><div class="form-group"><label>Monat</label><input type="month" id="aus-month-input" value="${y}-${String(m).padStart(2, '0')}"></div></div>`;
+    $('#aus-month-input').addEventListener('change', e => {
+      const [yr, mo] = e.target.value.split('-');
+      state._ausbilderYear = parseInt(yr);
+      state._ausbilderMonth = parseInt(mo);
+      loadAusbilderMonth(parseInt(yr), parseInt(mo));
+    });
+    loadAusbilderMonth(y, m);
+  } else if (sub === 'year') {
+    filter.innerHTML = `<div class="form-row" style="margin-bottom:0"><div class="form-group"><label>Jahr</label><input type="number" id="aus-year-input" value="${y}" min="2000" max="2100"></div></div>`;
+    $('#aus-year-input').addEventListener('change', e => {
+      state._ausbilderYear = parseInt(e.target.value);
+      loadAusbilderYear(parseInt(e.target.value));
+    });
+    loadAusbilderYear(y);
+  }
+}
+
+function loadAusbilderDay(date) {
+  const host = $('#aus-content');
+  if (!host) return;
+  host.innerHTML = '<p class="text-secondary">Lade...</p>';
+
+  const typeNames = { vacation: 'Urlaub', sick: 'Krankheit', holiday: 'Feiertag', bbs: 'BBS', ueberstunden_abbau: 'Überst. Abbau', other: 'Sonstige' };
+
+  api(`/api/ausbilder/day?date=${date}`).then(data => {
+    if (data.users.length === 0) {
+      host.innerHTML = '<div class="empty-state">Keine Benutzer vorhanden</div>';
+      return;
+    }
+
+    let html = '';
+    data.users.forEach(u => {
+      const otCls = u.overtime_minutes >= 0 ? 'stat-value--positive' : 'stat-value--negative';
+      html += `<div class="ausbilder-user-card">
+        <div class="ausbilder-user-header">
+          <strong>${u.name}</strong>
+          ${u.absence ? `<span class="absence-badge absence-badge--${u.absence.type}">${typeNames[u.absence.type] || u.absence.type}</span>` : ''}
+        </div>`;
+
+      if (u.entries.length > 0) {
+        html += `<div class="table-wrap"><table>
+          <tr><th>Kommen</th><th>Gehen</th><th>Pause</th><th>Arbeitszeit</th></tr>`;
+        u.entries.forEach(e => {
+          const work = calcWorkMin(e);
+          const pause = calcPauseMin(e);
+          html += `<tr>
+            <td>${e.clock_in || '-'}</td>
+            <td>${e.clock_out || '-'}</td>
+            <td>${e.pause_start && e.pause_end ? fmtMinShort(pause) : '-'}</td>
+            <td>${fmtMinShort(work)}</td>
+          </tr>`;
+        });
+        html += `</table></div>`;
+      } else if (!u.absence) {
+        html += `<div class="text-secondary" style="font-size:0.85rem">Keine Einträge</div>`;
+      }
+
+      html += `<div style="display:flex;gap:1.5rem;margin-top:0.5rem;font-size:0.85rem">
+        <span><strong>Ist:</strong> ${fmtMinShort(u.working_minutes)}</span>
+        <span><strong>Soll:</strong> ${fmtMinShort(u.target_minutes)}</span>
+        <span class="${otCls}"><strong>Überstd.:</strong> ${u.overtime_minutes >= 0 ? '+' : ''}${fmtMinShort(u.overtime_minutes)}</span>
+      </div>
+      </div>`;
+    });
+
+    host.innerHTML = html;
+  }).catch(err => { host.innerHTML = `<div class="empty-state">Fehler: ${err.message}</div>`; });
+}
+
+function loadAusbilderMonth(year, month) {
+  const host = $('#aus-content');
+  if (!host) return;
+  host.innerHTML = '<p class="text-secondary">Lade...</p>';
+
+  const now = new Date();
+  const isCurrentMonth = year === now.getFullYear() && month === (now.getMonth() + 1);
+  const maxDayParam = isCurrentMonth ? `&max_day=${now.getDate()}` : '';
+
+  api(`/api/ausbilder/overview?year=${year}&month=${month}${maxDayParam}`).then(data => {
+    if (data.users.length === 0) {
+      host.innerHTML = '<div class="empty-state">Keine Benutzer vorhanden</div>';
+      return;
+    }
+
+    let html = `<div class="table-wrap"><table>
+      <tr><th>Name</th><th>Arbeitstage</th><th>Ist</th><th>Soll${isCurrentMonth ? ' (bis heute)' : ''}</th><th>&Uuml;berstunden</th><th>Abwesenheiten</th></tr>`;
+
+    data.users.forEach(u => {
+      const otCls = u.overtime_minutes >= 0 ? 'stat-value--positive' : 'stat-value--negative';
+
+      html += `<tr>
+        <td><strong>${u.name}</strong></td>
+        <td>${u.working_days}</td>
+        <td>${fmtMinShort(u.working_minutes)}</td>
+        <td>${fmtMinShort(u.target_minutes)}</td>
+        <td class="${otCls}">${u.overtime_minutes >= 0 ? '+' : ''}${fmtMinShort(u.overtime_minutes)}</td>
+        <td>${u.absence_count}</td>
+      </tr>`;
+    });
+
+    html += '</table></div>';
+    host.innerHTML = html;
+  }).catch(err => { host.innerHTML = `<div class="empty-state">Fehler: ${err.message}</div>`; });
+}
+
+function loadAusbilderYear(year) {
+  const host = $('#aus-content');
+  if (!host) return;
+  host.innerHTML = '<p class="text-secondary">Lade...</p>';
+
+  const isCurrentYear = year === new Date().getFullYear();
+
+  api(`/api/ausbilder/year?year=${year}`).then(data => {
+    if (data.users.length === 0) {
+      host.innerHTML = '<div class="empty-state">Keine Benutzer vorhanden</div>';
+      return;
+    }
+
+    let html = `<div class="table-wrap"><table>
+      <tr><th>Name</th><th>Ist</th><th>Soll${isCurrentYear ? ' (bis heute)' : ''}</th><th>&Uuml;berstunden</th><th>Abwesenheiten</th></tr>`;
+
+    data.users.forEach(u => {
+      const otCls = u.overtime_minutes >= 0 ? 'stat-value--positive' : 'stat-value--negative';
+
+      html += `<tr>
+        <td><strong>${u.name}</strong></td>
+        <td>${fmtMinShort(u.working_minutes)}</td>
+        <td>${fmtMinShort(u.target_minutes)}</td>
+        <td class="${otCls}">${u.overtime_minutes >= 0 ? '+' : ''}${fmtMinShort(u.overtime_minutes)}</td>
+        <td>${u.absence_count}</td>
+      </tr>`;
+    });
+
+    html += '</table></div>';
+    host.innerHTML = html;
+  }).catch(err => { host.innerHTML = `<div class="empty-state">Fehler: ${err.message}</div>`; });
+}
+
 // ─── Login ──────────────────────────────────────────────
 function renderLogin() {
   const content = $('#content');
@@ -1025,6 +1298,7 @@ function renderLogin() {
         if (res.success) {
           localStorage.setItem('timy_user_id', res.user.id);
           localStorage.setItem('timy_user_name', res.user.name);
+          localStorage.setItem('timy_user_role', res.user.role || 'user');
           showApp();
         }
       })
@@ -1114,12 +1388,34 @@ function showRegisterModal() {
 function showApp() {
   const header = $('header');
   if (header) header.classList.remove('hidden');
+  state.userRole = localStorage.getItem('timy_user_role') || 'user';
+  
+  const isAusbilder = state.userRole === 'ausbilder';
+  const userViews = ['clock', 'overview', 'absences', 'dashboard', 'export'];
+  
+  userViews.forEach(view => {
+    const btn = document.querySelector(`.nav-btn[data-view="${view}"]`);
+    if (btn) btn.style.display = isAusbilder ? 'none' : '';
+  });
+  
+  const ausbilderBtn = document.querySelector('.nav-btn[data-view="ausbilder"]');
+  if (ausbilderBtn) ausbilderBtn.style.display = isAusbilder ? '' : 'none';
+  
   if (!navInitialized) {
     initNav();
     navInitialized = true;
   }
-  state.view = 'clock';
-  renderView('clock');
+  
+  $$('.nav-btn').forEach(b => b.classList.remove('active'));
+  if (isAusbilder) {
+    if (ausbilderBtn) ausbilderBtn.classList.add('active');
+    state.view = 'ausbilder';
+  } else {
+    const clockBtn = document.querySelector('.nav-btn[data-view="clock"]');
+    if (clockBtn) clockBtn.classList.add('active');
+    state.view = 'clock';
+  }
+  renderView(state.view);
 }
 
 // ─── Dark Mode ─────────────────────────────────────────

@@ -252,11 +252,15 @@ tr:hover td { background: var(--bg); }
 .month-day--vacation { background: var(--blue-bg); border-color: var(--blue); }
 .month-day--sick { background: var(--orange-bg); border-color: var(--orange); }
 .month-day--bbs { background: var(--bbs-bg); border-color: var(--bbs); }
+.month-day--ueberstunden_abbau { background: #e8f5e9; border-color: #2e7d32; }
 .month-day--partial { background: #fff8e1; border-color: var(--orange); }
 body.dark .month-day--partial { background: #3d2e00; border-color: var(--orange); }
+body.dark .month-day--ueberstunden_abbau { background: #1b3a2a; border-color: #4caf50; }
+body.dark .absence-badge--ueberstunden { background: #1b3a2a; color: #66bb6a; }
 .month-day--today { font-weight: 700; box-shadow: 0 0 0 2px var(--primary); }
 .month-day-num { font-size: 0.85rem; }
-.month-day-info { font-size: 0.65rem; color: var(--text-secondary); }
+.month-day-info { font-size: 0.65rem; color: var(--text-secondary); display: flex; align-items: center; gap: 2px; }
+.month-day-note { font-size: 0.6rem; }
 
 /* ─── Dashboard cards ────────────────────────────────── */
 .dash-grid {
@@ -279,6 +283,38 @@ body.dark .month-day--partial { background: #3d2e00; border-color: var(--orange)
   height: 100%; border-radius: 99px; transition: width .5s;
   background: linear-gradient(90deg, var(--green), #57d9a3);
 }
+
+/* ─── Absence card (day view) ─────────────────────────── */
+.absence-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.absence-header {
+  display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;
+}
+.absence-badge {
+  display: inline-block; padding: 0.2rem 0.6rem; border-radius: 99px;
+  font-size: 0.8rem; font-weight: 600;
+}
+.absence-badge--vacation { background: var(--blue-bg); color: var(--blue); }
+.absence-badge--sick { background: var(--orange-bg); color: var(--orange); }
+.absence-badge--holiday { background: var(--green-bg); color: var(--green); }
+.absence-badge--bbs { background: var(--bbs-bg); color: var(--bbs); }
+.absence-badge--ueberstunden { background: #e8f5e9; color: #2e7d32; }
+.absence-badge--other { background: var(--bg); color: var(--text-secondary); border: 1px solid var(--border); }
+.absence-note-area { display: flex; flex-direction: column; gap: 0.35rem; }
+.absence-note-label { font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); }
+.absence-note-row { display: flex; gap: 0.5rem; align-items: flex-start; }
+.absence-note-input {
+  flex: 1; padding: 0.45rem 0.6rem; border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 0.9rem; font-family: inherit;
+  background: var(--surface); color: var(--text); resize: vertical; min-height: 2.5rem;
+}
+.absence-note-input:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+body.dark .absence-note-input { background: var(--bg); color: var(--text); border-color: var(--border); }
 
 /* ─── Modal ──────────────────────────────────────────── */
 .modal-overlay {
@@ -334,6 +370,26 @@ body.dark .month-day--partial { background: #3d2e00; border-color: var(--orange)
 
 /* ─── Scrollable table wrapper ───────────────────────── */
 .table-wrap { overflow-x: auto; }
+
+/* ─── Ausbilder view ──────────────────────────────────── */
+.ausbilder-summary {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem; margin-bottom: 1.5rem;
+}
+.ausbilder-card {
+  padding: 1rem; border-radius: var(--radius); text-align: center;
+  border: 1px solid var(--border); background: var(--surface);
+}
+.ausbilder-value { font-size: 1.4rem; font-weight: 700; }
+.ausbilder-label { font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.15rem; }
+.ausbilder-user-card {
+  padding: 0.75rem; margin-bottom: 0.75rem;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg);
+}
+.ausbilder-user-header {
+  display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;
+}
 
 /* ─── Responsive ─────────────────────────────────────── */
 @media (max-width: 700px) {

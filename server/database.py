@@ -35,7 +35,7 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS absences (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL CHECK(type IN ('vacation','sick','holiday','bbs','other')),
+            type TEXT NOT NULL CHECK(type IN ('vacation','sick','holiday','bbs','other','ueberstunden_abbau')),
             start_date TEXT NOT NULL,
             end_date TEXT NOT NULL,
             days REAL NOT NULL DEFAULT 1.0,
@@ -67,7 +67,30 @@ def init_db():
                 ALTER TABLE absences RENAME TO absences_old;
                 CREATE TABLE absences (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    type TEXT NOT NULL CHECK(type IN ('vacation','sick','holiday','bbs','other')),
+                    type TEXT NOT NULL CHECK(type IN ('vacation','sick','holiday','bbs','other','ueberstunden_abbau')),
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    days REAL NOT NULL DEFAULT 1.0,
+                    note TEXT DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+                );
+                INSERT INTO absences SELECT * FROM absences_old;
+                DROP TABLE absences_old;
+            """)
+    except:
+        pass
+
+    # Migration: add 'ueberstunden_abbau' to existing absences table
+    try:
+        schema = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='absences'"
+        ).fetchone()
+        if schema and 'ueberstunden_abbau' not in schema[0]:
+            conn.executescript("""
+                ALTER TABLE absences RENAME TO absences_old;
+                CREATE TABLE absences (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT NOT NULL CHECK(type IN ('vacation','sick','holiday','bbs','other','ueberstunden_abbau')),
                     start_date TEXT NOT NULL,
                     end_date TEXT NOT NULL,
                     days REAL NOT NULL DEFAULT 1.0,
@@ -86,6 +109,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL,
             pin_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         );
     """)
@@ -97,10 +121,21 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Migration: add role to users table
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+    except sqlite3.OperationalError:
+        pass
+
     # Default admin user (PIN: 0000)
     if not conn.execute("SELECT id FROM users LIMIT 1").fetchone():
         h = hashlib.sha256("0000".encode()).hexdigest()
-        conn.execute("INSERT INTO users (name, pin_hash) VALUES (?, ?)", ("Admin", h))
+        conn.execute("INSERT INTO users (name, pin_hash, role) VALUES (?, ?, ?)", ("Admin", h, "user"))
+
+    # Demo ausbilder account (PIN: 1234)
+    if not conn.execute("SELECT id FROM users WHERE name='Ausbilder'").fetchone():
+        h = hashlib.sha256("1234".encode()).hexdigest()
+        conn.execute("INSERT INTO users (name, pin_hash, role) VALUES (?, ?, ?)", ("Ausbilder", h, "ausbilder"))
 
     conn.commit()
     conn.close()

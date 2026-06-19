@@ -8,6 +8,7 @@ TYPE_NAMES = {
     "sick": "Krank",
     "holiday": "Feiertag",
     "bbs": "BBS",
+    "ueberstunden_abbau": "Überstunden Abbau",
     "other": "Sonstige"
 }
 
