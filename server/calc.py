@@ -119,6 +119,36 @@ def get_adjusted_target_for_month(year, month, weekly_hours, absences, max_day=N
             total += get_target_minutes(d, weekly_hours, friday_hours)
     return total
 
+def get_cumulative_overtime(conn, user_id, start_date, end_date, weekly_hours, friday_hours=0):
+    rows = conn.execute(
+        "SELECT * FROM time_entries WHERE date BETWEEN ? AND ? AND user_id=? ORDER BY date",
+        (start_date, end_date, user_id)
+    ).fetchall()
+    total_working = sum(calc_working_minutes(dict(r)) for r in rows)
+
+    abs_rows = conn.execute(
+        "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND user_id=?",
+        (end_date, start_date, user_id)
+    ).fetchall()
+    abs_list = [dict(a) for a in abs_rows]
+    absence_info = get_absence_info_by_date(abs_list)
+
+    total_target = 0
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    current = start_dt
+    while current <= end_dt:
+        d = current.strftime("%Y-%m-%d")
+        if is_weekday(d):
+            target = get_target_minutes(d, weekly_hours, friday_hours)
+            if d in absence_info:
+                if absence_info[d]["type"] != "ueberstunden_abbau":
+                    target = 0
+            total_target += target
+        current += timedelta(days=1)
+
+    return total_working - total_target
+
 def get_working_days_in_month(year, month, absences, max_day=None):
     last_day = max_day if max_day is not None else get_month_range(year, month)
     absence_info = get_absence_info_by_date(absences)

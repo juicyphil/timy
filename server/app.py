@@ -13,7 +13,7 @@ from .calc import (
     calc_working_minutes, calc_pause_minutes,
     get_target_minutes, get_week_dates, get_month_range, is_weekday,
     get_absence_dates_set, get_absence_info_by_date, get_adjusted_target_for_month,
-    get_working_days_in_month, DAYS
+    get_working_days_in_month, get_cumulative_overtime, DAYS
 )
 from .export import export_times_csv, export_absences_csv
 
@@ -60,6 +60,12 @@ def create_user(data: CreateUser):
         conn.close()
         raise HTTPException(400, "Benutzer existiert bereits")
 
+def get_user_start_date(conn, uid):
+    user = conn.execute("SELECT start_date, created_at FROM users WHERE id=?", (uid,)).fetchone()
+    if not user:
+        return datetime.now().strftime("%Y-%m-%d")
+    return user["start_date"] or user["created_at"][:10]
+
 @app.get("/api/users")
 def list_users(uid: int = Query(1)):
     conn = get_connection()
@@ -104,14 +110,16 @@ def ausbilder_overview(year: int = Query(...), month: int = Query(...), uid: int
         abs_list = [dict(a) for a in abs_rows]
         working_days = get_working_days_in_month(year, month, abs_list, max_day=calc_day)
         target = get_adjusted_target_for_month(year, month, weekly_hours, abs_list, max_day=calc_day, friday_hours=friday_hours)
-        overtime = total_working - target
+        
+        user_start = get_user_start_date(conn, uid_u)
+        cumulative_ot = get_cumulative_overtime(conn, uid_u, user_start, end, weekly_hours, friday_hours)
         
         result.append({
             "user_id": uid_u,
             "name": u["name"],
             "working_minutes": total_working,
             "target_minutes": target,
-            "overtime_minutes": overtime,
+            "overtime_minutes": cumulative_ot,
             "working_days": working_days,
             "absence_count": len(abs_list)
         })
@@ -150,6 +158,9 @@ def ausbilder_day(date: str = Query(...), uid: int = Query(1)):
         ).fetchone()
         absence = dict(abs_row) if abs_row else None
         
+        user_start = get_user_start_date(conn, uid_u)
+        cumulative_ot = get_cumulative_overtime(conn, uid_u, user_start, date, weekly_hours, friday_hours)
+        
         result.append({
             "user_id": uid_u,
             "name": u["name"],
@@ -157,7 +168,7 @@ def ausbilder_day(date: str = Query(...), uid: int = Query(1)):
             "working_minutes": working,
             "pause_minutes": pause,
             "target_minutes": target,
-            "overtime_minutes": working - target,
+            "overtime_minutes": cumulative_ot,
             "absence": absence
         })
     
@@ -209,12 +220,16 @@ def ausbilder_year(year: int = Query(...), uid: int = Query(1)):
             total_target += get_adjusted_target_for_month(year, month, weekly_hours, abs_list, max_day=max_day, friday_hours=friday_hours)
             total_absence_days += len(abs_list)
         
+        user_start = get_user_start_date(conn, uid_u)
+        year_end = f"{year:04d}-{max_month:02d}-{now.day if is_current_year else 31:02d}"
+        cumulative_ot = get_cumulative_overtime(conn, uid_u, user_start, year_end, weekly_hours, friday_hours)
+        
         result.append({
             "user_id": uid_u,
             "name": u["name"],
             "working_minutes": total_working,
             "target_minutes": total_target,
-            "overtime_minutes": total_working - total_target,
+            "overtime_minutes": cumulative_ot,
             "absence_count": total_absence_days
         })
     
@@ -273,7 +288,8 @@ def get_today(uid: int = Query(1)):
     total_working = sum(calc_working_minutes(dict(e)) for e in entries)
     total_pause = sum(calc_pause_minutes(dict(e)) for e in entries)
     target = get_target_minutes(today, weekly_hours, friday_hours)
-    overtime = total_working - target
+    start_date = get_user_start_date(conn, uid)
+    overtime = get_cumulative_overtime(conn, uid, start_date, today, weekly_hours, friday_hours)
 
     conn.close()
     return {
@@ -450,8 +466,10 @@ def get_week(date: str = Query(...), uid: int = Query(1), max_date: str = Query(
     weekly_hours = float(s.get("weekly_hours", 40))
     friday_hours = float(s.get("friday_hours", 0))
 
+    week_dates = get_week_dates(date)
+    end_of_week = week_dates[-1]
     result = []
-    for d in get_week_dates(date):
+    for d in week_dates:
         rows = conn.execute(
             "SELECT * FROM time_entries WHERE date=? AND user_id=? ORDER BY id", (d, uid)
         ).fetchall()
@@ -467,8 +485,11 @@ def get_week(date: str = Query(...), uid: int = Query(1), max_date: str = Query(
             "target_minutes": target if count else 0,
             "overtime_minutes": (working - target) if count else 0
         })
+    cutoff = max_date if max_date else end_of_week
+    start_date = get_user_start_date(conn, uid)
+    cumulative = get_cumulative_overtime(conn, uid, start_date, cutoff, weekly_hours, friday_hours)
     conn.close()
-    return result
+    return {"days": result, "cumulative_overtime_minutes": cumulative}
 
 @app.get("/api/month")
 def get_month(year: int = Query(...), month: int = Query(...), uid: int = Query(1), max_day: int = Query(None)):
@@ -517,12 +538,16 @@ def get_month(year: int = Query(...), month: int = Query(...), uid: int = Query(
             "has_entry": len(rows) > 0
         })
 
+    cumulative_end = f"{year:04d}-{month:02d}-{count_day:02d}"
+    start_date = get_user_start_date(conn, uid)
+    cumulative_ot = get_cumulative_overtime(conn, uid, start_date, cumulative_end, weekly_hours, friday_hours)
+
     conn.close()
 
     return {
         "year": year, "month": month,
         "days": days,
-        "totals": {"working_minutes": tw, "target_minutes": tt, "overtime_minutes": to, "pause_minutes": tp},
+        "totals": {"working_minutes": tw, "target_minutes": tt, "overtime_minutes": cumulative_ot, "pause_minutes": tp},
         "absences": absences_list
     }
 
@@ -623,11 +648,14 @@ def dashboard(year: int = Query(...), month: int = Query(...), uid: int = Query(
     total_vacation_used = float(all_vac["total"] or 0)
     presence_pct = round(min(100, (total_working / target) * 100), 1) if target > 0 else 0
 
+    start_date = get_user_start_date(conn, uid)
+    cumulative_ot = get_cumulative_overtime(conn, uid, start_date, end, weekly_hours, friday_hours)
+
     conn.close()
     return {
         "year": year, "month": month,
         "working_minutes": total_working, "target_minutes": target,
-        "overtime_minutes": overtime, "working_days": working_days,
+        "overtime_minutes": cumulative_ot, "working_days": working_days,
         "vacation_used": total_vacation_used, "vacation_total": vacation_days,
         "sick_days": sick_days, "presence_pct": presence_pct
     }

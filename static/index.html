@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>timy – Zeiterfassung</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#232428" media="(prefers-color-scheme: dark)">
 </head>
 <body>
   <header>
@@ -24,6 +29,24 @@
     </div>
   </header>
   <main id="content"></main>
+  <nav class="bottom-nav" id="bottom-nav">
+    <button class="bottom-nav-btn active" data-view="clock">
+      <span class="nav-icon">&#9200;</span>
+      <span>Stempeln</span>
+    </button>
+    <button class="bottom-nav-btn" data-view="overview">
+      <span class="nav-icon">&#128203;</span>
+      <span>&Uuml;bersicht</span>
+    </button>
+    <button class="bottom-nav-btn" data-view="absences">
+      <span class="nav-icon">&#128197;</span>
+      <span>Abwesenheit</span>
+    </button>
+    <button class="bottom-nav-btn" data-view="dashboard">
+      <span class="nav-icon">&#128202;</span>
+      <span>Dashboard</span>
+    </button>
+  </nav>
 
   <script src="/static/app.js"></script>
 </body>

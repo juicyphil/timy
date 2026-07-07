@@ -50,15 +50,19 @@ function parseHHMM(s) { if (!s) return null; const [h, m] = s.split(':'); return
 
 // ─── Navigation ────────────────────────────────────────
 function initNav() {
+  function handleNavClick(btn) {
+    const view = btn.dataset.view;
+    if (!view) return;
+    $$('.nav-btn, .bottom-nav-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.view = view;
+    renderView(view);
+  }
   $$('.nav-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const view = btn.dataset.view;
-      if (!view) return;
-      $$('.nav-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.view = view;
-      renderView(view);
-    });
+    btn.addEventListener('click', () => handleNavClick(btn));
+  });
+  $$('.bottom-nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => handleNavClick(btn));
   });
 }
 
@@ -286,7 +290,7 @@ function loadDayEntries(date) {
 
     if (entries.length > 0) {
       let total = 0, totalPause = 0;
-      html += `<div class="table-wrap"><table>
+      html += `<div class="table-wrap"><table class="entry-table">
         <tr><th>Kommen</th><th>Gehen</th><th>Pause</th><th>Zeit</th><th>Soll</th><th>&Uuml;berstd.</th><th></th></tr>`;
 
       entries.forEach(e => {
@@ -297,19 +301,19 @@ function loadDayEntries(date) {
         const ot = work - targetMin;
         const otCls = ot >= 0 ? 'stat-value--positive' : 'stat-value--negative';
         html += `<tr>
-          <td>${e.clock_in || '-'}</td>
-          <td>${e.clock_out || '-'}</td>
-          <td>${e.pause_start && e.pause_end ? fmtMinShort(pause) : '-'}</td>
-          <td>${fmtMinShort(work)}</td>
-          <td>${fmtMinShort(targetMin)}</td>
-          <td class="${otCls}">${ot >= 0 ? '+' : ''}${fmtMinShort(ot)}</td>
-          <td><button class="btn btn-ghost btn-sm" onclick="editEntry(${e.id}, '${e.date}')">&#9998;</button><button class="btn btn-red btn-sm" onclick="deleteEntry(${e.id}, '${e.date}')">&#128465;</button></td>
+          <td data-label="Kommen">${e.clock_in || '-'}</td>
+          <td data-label="Gehen">${e.clock_out || '-'}</td>
+          <td data-label="Pause">${e.pause_start && e.pause_end ? fmtMinShort(pause) : '-'}</td>
+          <td data-label="Zeit">${fmtMinShort(work)}</td>
+          <td data-label="Soll">${fmtMinShort(targetMin)}</td>
+          <td data-label="&Uuml;berstd." class="${otCls}">${ot >= 0 ? '+' : ''}${fmtMinShort(ot)}</td>
+          <td data-label=""><button class="btn btn-ghost btn-sm" onclick="editEntry(${e.id}, '${e.date}')">&#9998;</button><button class="btn btn-red btn-sm" onclick="deleteEntry(${e.id}, '${e.date}')">&#128465;</button></td>
         </tr>`;
       });
 
       const totalOt = total - (targetMin * entries.length);
       html += `<tr style="font-weight:600">
-        <td></td><td></td><td>Summe Pause: ${fmtMinShort(totalPause)}</td>
+        <td></td><td></td><td>Pause: ${fmtMinShort(totalPause)}</td>
         <td>${fmtMinShort(total)}</td>
         <td>${fmtMinShort(targetMin * entries.length)}</td>
         <td class="${totalOt >= 0 ? 'stat-value--positive' : 'stat-value--negative'}">${totalOt >= 0 ? '+' : ''}${fmtMinShort(totalOt)}</td>
@@ -402,15 +406,16 @@ function loadWeek(date) {
   const isCurrentWeek = weekDates.includes(today);
   const maxDateParam = isCurrentWeek ? `&max_date=${today}` : '';
 
-  api('/api/week?date=' + date + maxDateParam).then(days => {
+  api('/api/week?date=' + date + maxDateParam).then(res => {
+    const days = res.days;
+    const cumulativeOt = res.cumulative_overtime_minutes;
     const maxMin = Math.max(...days.map(d => d.working_minutes), 480);
-    let totalWork = 0, totalTarget = 0, totalOt = 0;
+    let totalWork = 0, totalTarget = 0;
 
     let html = '';
     days.forEach(d => {
       totalWork += d.working_minutes;
       totalTarget += d.target_minutes;
-      totalOt += d.overtime_minutes;
 
       const pct = Math.min(100, (d.working_minutes / Math.max(maxMin, 1)) * 100);
       let barClass = 'week-bar--missing';
@@ -420,7 +425,7 @@ function loadWeek(date) {
       const isWeekend = d.day_name === 'Sa' || d.day_name === 'So';
 
       html += `<div class="week-row">
-        <div style="width:40px;font-size:0.85rem;font-weight:600">${d.day_name}</div>
+        <div class="week-day-name">${d.day_name}</div>
         <div class="week-day" style="flex:1">
           <div class="week-bar-wrap">
             <div class="week-bar ${barClass}" style="width:${pct}%"></div>
@@ -431,10 +436,10 @@ function loadWeek(date) {
     });
 
     const otLabel = isCurrentWeek ? '&Uuml;berstd. (bis heute):' : '&Uuml;berstd.:';
-    html += `<div style="margin-top:1rem;display:flex;gap:2rem;flex-wrap:wrap;font-size:0.9rem">
+    html += `<div class="week-totals">
       <span><strong>Ist:</strong> ${fmtMinShort(totalWork)}</span>
       <span><strong>Soll:</strong> ${fmtMinShort(totalTarget)}</span>
-      <span style="color:${totalOt >= 0 ? 'var(--green)' : 'var(--red)'}"><strong>${otLabel}</strong> ${totalOt >= 0 ? '+' : ''}${fmtMinShort(totalOt)}</span>
+      <span style="color:${cumulativeOt >= 0 ? 'var(--green)' : 'var(--red)'}"><strong>${otLabel}</strong> ${cumulativeOt >= 0 ? '+' : ''}${fmtMinShort(cumulativeOt)}</span>
     </div>`;
 
     host.innerHTML = html;
@@ -550,7 +555,7 @@ function loadMonth(year, month) {
     html += '</div>';
 
     const otLabel = isCurrentMonth ? '&Uuml;berstd. (bis heute):' : '&Uuml;berstd.:';
-    html += `<div style="margin-top:1rem;display:flex;gap:1.5rem;flex-wrap:wrap;font-size:0.9rem">
+    html += `<div class="month-totals">
       <span><strong>Ist:</strong> ${fmtMinShort(data.totals.working_minutes)}</span>
       <span><strong>Soll:</strong> ${fmtMinShort(data.totals.target_minutes)}</span>
       <span style="color:${ot >= 0 ? 'var(--green)' : 'var(--red)'}"><strong>${otLabel}</strong> ${ot >= 0 ? '+' : ''}${fmtMinShort(ot)}</span>

@@ -127,6 +127,12 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Migration: add start_date to users table
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN start_date TEXT")
+    except sqlite3.OperationalError:
+        pass
+
     # Default admin user (PIN: 0000)
     if not conn.execute("SELECT id FROM users LIMIT 1").fetchone():
         h = hashlib.sha256("0000".encode()).hexdigest()
