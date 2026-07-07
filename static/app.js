@@ -74,6 +74,7 @@ function renderView(view) {
   else if (view === 'absences') renderAbsences(content);
   else if (view === 'dashboard') renderDashboard(content);
   else if (view === 'export') renderExport(content);
+  else if (view === 'import') renderImport(content);
   else if (view === 'settings') renderSettings(content);
   else if (view === 'ausbilder') renderAusbilder(content);
 }
@@ -861,9 +862,93 @@ function renderExport(host) {
   });
 }
 
+// ─── Import View ───────────────────────────────────────
+function renderImport(host) {
+  host.innerHTML = `
+    <div class="card">
+      <h2>Import</h2>
+      <p class="text-secondary mb-1">Importiere CSV-Dateien im Export-Format.<br>
+      Bestehende Eintr&auml;ge mit gleichem Datum und Uhrzeit werden &uuml;berschrieben.</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Daten</label>
+          <select id="imp-type">
+            <option value="all">Zeiten + Abwesenheiten</option>
+            <option value="time">Nur Zeiten</option>
+            <option value="absence">Nur Abwesenheiten</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>CSV-Datei</label>
+          <input type="file" id="imp-file" accept=".csv">
+        </div>
+        <div class="form-group">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" id="imp-btn">Importieren</button>
+        </div>
+      </div>
+      <div id="imp-result"></div>
+    </div>
+  `;
+
+  $('#imp-btn').addEventListener('click', () => {
+    const fileInput = $('#imp-file');
+    const type = $('#imp-type').value;
+    const resultEl = $('#imp-result');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+      resultEl.innerHTML = '<p class="text-secondary" style="margin-top:1rem">Bitte w&auml;hle eine CSV-Datei aus.</p>';
+      return;
+    }
+
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const content = reader.result;
+      const formData = new FormData();
+      formData.append('file', new Blob([content], { type: 'text/csv' }), file.name);
+
+      resultEl.innerHTML = '<p class="text-secondary" style="margin-top:1rem">Importiere...</p>';
+      $('#imp-btn').disabled = true;
+
+      const userId = localStorage.getItem('timy_user_id');
+      fetch('/api/import/csv?type=' + type + '&uid=' + userId, {
+        method: 'POST',
+        body: formData
+      })
+        .then(r => {
+          if (!r.ok) return r.json().then(e => { throw new Error(e.detail || 'Fehler') });
+          return r.json();
+        })
+        .then(res => {
+          let msg = 'Import erfolgreich!';
+          if (res.times_imported !== undefined) msg += ' ' + res.times_imported + ' Zeiteintr\u00e4ge importiert.';
+          if (res.absences_imported !== undefined) msg += ' ' + res.absences_imported + ' Abwesenheiten importiert.';
+          resultEl.innerHTML = '<p style="margin-top:1rem;color:var(--green)">' + msg + '</p>';
+          $('#imp-btn').disabled = false;
+        })
+        .catch(err => {
+          resultEl.innerHTML = '<p style="margin-top:1rem;color:var(--red)">Fehler: ' + err.message + '</p>';
+          $('#imp-btn').disabled = false;
+        });
+    };
+
+    reader.onerror = () => {
+      resultEl.innerHTML = '<p style="margin-top:1rem;color:var(--red)">Datei konnte nicht gelesen werden.</p>';
+    };
+
+    reader.readAsText(file);
+  });
+}
+
 // ─── Settings View ─────────────────────────────────────
 function renderSettings(host) {
   const userName = localStorage.getItem('timy_user_name') || 'Benutzer';
+  const userRole = localStorage.getItem('timy_user_role') || 'user';
+  const userId = parseInt(localStorage.getItem('timy_user_id') || '1');
+  const isAdmin = userRole === 'admin';
+
   api('/api/settings').then(s => {
     host.innerHTML = `
       <div class="card">
@@ -900,8 +985,28 @@ function renderSettings(host) {
       <div class="card">
         <h2>Benutzer</h2>
         <p class="mb-1">Angemeldet als: <strong>${userName}</strong></p>
-        <button class="btn btn-ghost" id="set-logout">Abmelden</button>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Aktuelle PIN</label>
+            <input type="password" id="set-old-pin" placeholder="****">
+          </div>
+          <div class="form-group">
+            <label>Neue PIN</label>
+            <input type="password" id="set-new-pin" placeholder="****">
+          </div>
+          <div class="form-group">
+            <label>Neue PIN wiederholen</label>
+            <input type="password" id="set-new-pin2" placeholder="****">
+          </div>
+          <div class="form-group">
+            <label>&nbsp;</label>
+            <button class="btn btn-primary" id="set-pin-btn">PIN &auml;ndern</button>
+          </div>
+        </div>
+        <p id="set-pin-msg" style="font-size:0.85rem;margin-top:0.25rem"></p>
+        <button class="btn btn-ghost" id="set-logout" style="margin-top:0.5rem">Abmelden</button>
       </div>
+      ${isAdmin ? '<div class="card" id="admin-users-card"><h2>Benutzer verwalten</h2><div id="admin-users-list"><p class="text-secondary">Lade...</p></div></div>' : ''}
       <div class="card">
         <p class="text-secondary" style="font-size:0.8rem">Datenbank: data/timy.db (SQLite, lokal, offline)</p>
       </div>
@@ -920,6 +1025,29 @@ function renderSettings(host) {
       }).then(() => { alert('Gespeichert'); }).catch(err => alert(err.message));
     });
 
+    $('#set-pin-btn').addEventListener('click', () => {
+      const oldPin = $('#set-old-pin').value;
+      const newPin = $('#set-new-pin').value;
+      const newPin2 = $('#set-new-pin2').value;
+      const msgEl = $('#set-pin-msg');
+      if (!oldPin) { msgEl.textContent = 'Aktuelle PIN eingeben'; msgEl.style.color = 'var(--red)'; return; }
+      if (newPin.length < 4) { msgEl.textContent = 'Neue PIN muss mindestens 4 Zeichen haben'; msgEl.style.color = 'var(--red)'; return; }
+      if (newPin !== newPin2) { msgEl.textContent = 'Neue PINs stimmen nicht überein'; msgEl.style.color = 'var(--red)'; return; }
+      api('/api/users/' + userId + '/pin', {
+        method: 'PUT',
+        body: JSON.stringify({ old_pin: oldPin, new_pin: newPin })
+      }).then(() => {
+        msgEl.textContent = 'PIN erfolgreich geändert!';
+        msgEl.style.color = 'var(--green)';
+        $('#set-old-pin').value = '';
+        $('#set-new-pin').value = '';
+        $('#set-new-pin2').value = '';
+      }).catch(err => {
+        msgEl.textContent = err.message;
+        msgEl.style.color = 'var(--red)';
+      });
+    });
+
     $('#set-logout').addEventListener('click', () => {
       localStorage.removeItem('timy_user_id');
       localStorage.removeItem('timy_user_name');
@@ -928,7 +1056,70 @@ function renderSettings(host) {
       navInitialized = false;
       renderLogin();
     });
+
+    if (isAdmin) loadAdminUsers(userId);
   });
+}
+
+function loadAdminUsers(uid) {
+  const list = $('#admin-users-list');
+  if (!list) return;
+
+  api('/api/users?uid=' + uid).then(users => {
+    const roleNames = { 'user': 'Benutzer', 'ausbilder': 'Ausbilder', 'admin': 'Admin' };
+    const currentUserId = parseInt(localStorage.getItem('timy_user_id'));
+
+    let html = `<div class="table-wrap"><table>
+      <tr><th>Name</th><th>Rolle</th><th>Aktion</th></tr>`;
+
+    users.forEach(u => {
+      const isSelf = u.id === currentUserId;
+      const canChange = u.role !== 'admin' && !isSelf;
+      const isAusbilder = u.role === 'ausbilder';
+      html += `<tr>
+        <td>${u.name}${isSelf ? ' <span class="text-secondary">(Du)</span>' : ''}</td>
+        <td>${roleNames[u.role] || u.role}</td>
+        <td>
+          ${canChange ? `
+            <button class="btn btn-sm ${isAusbilder ? 'btn-ghost' : 'btn-primary'}" onclick="toggleRole(${u.id}, '${u.name}', ${isAusbilder})">
+              ${isAusbilder ? 'Rolle entziehen' : 'Zum Ausbilder machen'}
+            </button>
+            <button class="btn btn-red btn-sm" onclick="deleteUser(${u.id}, '${u.name}')" style="margin-left:0.25rem">Löschen</button>
+          ` : isSelf ? '<span class="text-secondary">—</span>' : '<span class="text-secondary">Kann nicht geändert werden</span>'}
+        </td>
+      </tr>`;
+    });
+
+    html += '</table></div>';
+    list.innerHTML = html;
+  }).catch(err => {
+    list.innerHTML = '<p class="text-secondary" style="color:var(--red)">Fehler: ' + err.message + '</p>';
+  });
+}
+
+function toggleRole(userId, userName, isCurrentlyAusbilder) {
+  const newRole = isCurrentlyAusbilder ? 'user' : 'ausbilder';
+  const label = isCurrentlyAusbilder ? 'entziehen' : 'geben';
+  if (!confirm('"' + userName + '" die Ausbilder-Rolle ' + label + '?')) return;
+
+  const currentUid = localStorage.getItem('timy_user_id');
+  api('/api/users/' + userId + '/role?uid=' + currentUid, {
+    method: 'PUT',
+    body: JSON.stringify({ role: newRole })
+  }).then(() => {
+    loadAdminUsers(parseInt(currentUid));
+  }).catch(err => alert(err.message));
+}
+
+function deleteUser(userId, userName) {
+  if (!confirm('Benutzer "' + userName + '" wirklich löschen?\n\nAlle Zeiten und Abwesenheiten dieses Benutzers werden ebenfalls gelöscht.')) return;
+
+  const currentUid = localStorage.getItem('timy_user_id');
+  api('/api/users/' + userId + '?uid=' + currentUid, {
+    method: 'DELETE'
+  }).then(() => {
+    loadAdminUsers(parseInt(currentUid));
+  }).catch(err => alert(err.message));
 }
 
 // ─── Manual Entry Modal ────────────────────────────────
@@ -1396,24 +1587,30 @@ function showApp() {
   state.userRole = localStorage.getItem('timy_user_role') || 'user';
   
   const isAusbilder = state.userRole === 'ausbilder';
-  const userViews = ['clock', 'overview', 'absences', 'dashboard', 'export'];
-  
-  userViews.forEach(view => {
-    const btn = document.querySelector(`.nav-btn[data-view="${view}"]`);
-    if (btn) btn.style.display = isAusbilder ? 'none' : '';
-  });
-  
-  const ausbilderBtn = document.querySelector('.nav-btn[data-view="ausbilder"]');
-  if (ausbilderBtn) ausbilderBtn.style.display = isAusbilder ? '' : 'none';
-  
+  const isAdmin = state.userRole === 'admin';
+  const regularViews = ['clock', 'overview', 'absences', 'dashboard', 'export', 'import'];
+
+  if (isAusbilder) {
+    regularViews.forEach(view => {
+      const btn = document.querySelector(`.nav-btn[data-view="${view}"]`);
+      if (btn) btn.style.display = 'none';
+    });
+    const b = document.querySelector('.nav-btn[data-view="ausbilder"]');
+    if (b) b.style.display = '';
+  } else {
+    const b = document.querySelector('.nav-btn[data-view="ausbilder"]');
+    if (b) b.style.display = 'none';
+  }
+
   if (!navInitialized) {
     initNav();
     navInitialized = true;
   }
-  
+
   $$('.nav-btn').forEach(b => b.classList.remove('active'));
   if (isAusbilder) {
-    if (ausbilderBtn) ausbilderBtn.classList.add('active');
+    const b = document.querySelector('.nav-btn[data-view="ausbilder"]');
+    if (b) b.classList.add('active');
     state.view = 'ausbilder';
   } else {
     const clockBtn = document.querySelector('.nav-btn[data-view="clock"]');

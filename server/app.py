@@ -1,13 +1,13 @@
 import hashlib
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, File, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from datetime import datetime
 
 from .database import init_db, get_connection
-from .models import TimeEntry, Absence, Settings, LoginRequest, CreateUser, AbsenceNoteUpdate
+from .models import TimeEntry, Absence, Settings, LoginRequest, CreateUser, AbsenceNoteUpdate, ChangePinRequest, UpdateRoleRequest
 from .calc import (
     parse_time, format_minutes, format_minutes_short,
     calc_working_minutes, calc_pause_minutes,
@@ -16,6 +16,7 @@ from .calc import (
     get_working_days_in_month, get_cumulative_overtime, DAYS
 )
 from .export import export_times_csv, export_absences_csv
+from .import_csv import import_times_csv, import_absences_csv
 
 app = FastAPI(title="timy")
 
@@ -60,6 +61,66 @@ def create_user(data: CreateUser):
         conn.close()
         raise HTTPException(400, "Benutzer existiert bereits")
 
+@app.put("/api/users/{user_id}/role")
+def update_user_role(user_id: int, data: UpdateRoleRequest, uid: int = Query(1)):
+    conn = get_connection()
+    admin = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+    if not admin or admin["role"] != "admin":
+        conn.close()
+        raise HTTPException(403, "Nur Admins können Rollen ändern")
+    if data.role not in ("user", "ausbilder"):
+        conn.close()
+        raise HTTPException(400, "Ungültige Rolle")
+    conn.execute("UPDATE users SET role=? WHERE id=?", (data.role, user_id))
+    conn.commit()
+    u = dict(conn.execute("SELECT id, name, role FROM users WHERE id=?", (user_id,)).fetchone())
+    conn.close()
+    return {"success": True, "user": u}
+
+@app.put("/api/users/{user_id}/pin")
+def change_user_pin(user_id: int, data: ChangePinRequest, uid: int = Query(1)):
+    if user_id != uid:
+        raise HTTPException(403, "Nur eigene PIN änderbar")
+    if len(data.new_pin) < 4:
+        raise HTTPException(400, "PIN muss mindestens 4 Zeichen haben")
+    conn = get_connection()
+    user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    old_hash = hashlib.sha256(data.old_pin.encode()).hexdigest()
+    if user["pin_hash"] != old_hash:
+        conn.close()
+        raise HTTPException(400, "Aktuelle PIN ist falsch")
+    new_hash = hashlib.sha256(data.new_pin.encode()).hexdigest()
+    conn.execute("UPDATE users SET pin_hash=? WHERE id=?", (new_hash, user_id))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: int, uid: int = Query(1)):
+    if user_id == uid:
+        raise HTTPException(400, "Kann sich nicht selbst löschen")
+    conn = get_connection()
+    admin = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+    if not admin or admin["role"] != "admin":
+        conn.close()
+        raise HTTPException(403, "Nur Admins können Benutzer löschen")
+    target = conn.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
+    if not target:
+        conn.close()
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    if target["role"] == "admin":
+        conn.close()
+        raise HTTPException(400, "Kann keinen Admin löschen")
+    conn.execute("DELETE FROM time_entries WHERE user_id=?", (user_id,))
+    conn.execute("DELETE FROM absences WHERE user_id=?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
 def get_user_start_date(conn, uid):
     user = conn.execute("SELECT start_date, created_at FROM users WHERE id=?", (uid,)).fetchone()
     if not user:
@@ -70,7 +131,7 @@ def get_user_start_date(conn, uid):
 def list_users(uid: int = Query(1)):
     conn = get_connection()
     user = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
-    if not user or user["role"] != "ausbilder":
+    if not user or user["role"] not in ("ausbilder", "admin"):
         conn.close()
         raise HTTPException(403, "Keine Berechtigung")
     users = conn.execute("SELECT id, name, role, created_at FROM users ORDER BY name").fetchall()
@@ -659,6 +720,39 @@ def dashboard(year: int = Query(...), month: int = Query(...), uid: int = Query(
         "vacation_used": total_vacation_used, "vacation_total": vacation_days,
         "sick_days": sick_days, "presence_pct": presence_pct
     }
+
+# ─── Import ─────────────────────────────────────────────────────────────
+
+@app.post("/api/import/csv")
+def import_csv(
+    file: UploadFile = File(...),
+    type: str = Query("all"),
+    uid: int = Query(1)
+):
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(400, "Nur CSV-Dateien werden unterstützt")
+
+    content = file.file.read().decode("utf-8-sig")
+    conn = get_connection()
+    result = {}
+
+    try:
+        if type in ("time", "all"):
+            count = import_times_csv(conn, content, uid)
+            result["times_imported"] = count
+
+        if type in ("absence", "all"):
+            count = import_absences_csv(conn, content, uid)
+            result["absences_imported"] = count
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise HTTPException(400, f"Import fehlgeschlagen: {str(e)}")
+
+    conn.close()
+    return {"success": True, **result}
 
 # ─── Export ─────────────────────────────────────────────────────────────
 

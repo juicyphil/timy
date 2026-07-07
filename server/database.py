@@ -136,7 +136,10 @@ def init_db():
     # Default admin user (PIN: 0000)
     if not conn.execute("SELECT id FROM users LIMIT 1").fetchone():
         h = hashlib.sha256("0000".encode()).hexdigest()
-        conn.execute("INSERT INTO users (name, pin_hash, role) VALUES (?, ?, ?)", ("Admin", h, "user"))
+        conn.execute("INSERT INTO users (name, pin_hash, role) VALUES (?, ?, ?)", ("Admin", h, "admin"))
+
+    # Migration: set existing Admin user to admin role
+    conn.execute("UPDATE users SET role='admin' WHERE name='Admin' AND role='user'")
 
     # Demo ausbilder account (PIN: 1234)
     if not conn.execute("SELECT id FROM users WHERE name='Ausbilder'").fetchone():

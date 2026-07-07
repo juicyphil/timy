@@ -34,3 +34,10 @@ class CreateUser(BaseModel):
 
 class AbsenceNoteUpdate(BaseModel):
     note: str
+
+class ChangePinRequest(BaseModel):
+    old_pin: str
+    new_pin: str
+
+class UpdateRoleRequest(BaseModel):
+    role: str
