@@ -867,7 +867,7 @@ function renderImport(host) {
   host.innerHTML = `
     <div class="card">
       <h2>Import</h2>
-      <p class="text-secondary mb-1">Importiere CSV-Dateien im Export-Format.<br>
+      <p class="text-secondary mb-1">Importiere CSV- oder ZIP-Dateien im Export-Format.<br>
       Bestehende Eintr&auml;ge mit gleichem Datum und Uhrzeit werden &uuml;berschrieben.</p>
       <div class="form-row">
         <div class="form-group">
@@ -880,7 +880,7 @@ function renderImport(host) {
         </div>
         <div class="form-group">
           <label>CSV-Datei</label>
-          <input type="file" id="imp-file" accept=".csv">
+          <input type="file" id="imp-file" accept=".csv,.zip">
         </div>
         <div class="form-group">
           <label>&nbsp;</label>
@@ -902,12 +902,13 @@ function renderImport(host) {
     }
 
     const file = fileInput.files[0];
+    const isZip = file.name.toLowerCase().endsWith('.zip');
     const reader = new FileReader();
 
     reader.onload = () => {
-      const content = reader.result;
       const formData = new FormData();
-      formData.append('file', new Blob([content], { type: 'text/csv' }), file.name);
+      const mime = isZip ? 'application/zip' : 'text/csv';
+      formData.append('file', new Blob([reader.result], { type: mime }), file.name);
 
       resultEl.innerHTML = '<p class="text-secondary" style="margin-top:1rem">Importiere...</p>';
       $('#imp-btn').disabled = true;
@@ -938,7 +939,11 @@ function renderImport(host) {
       resultEl.innerHTML = '<p style="margin-top:1rem;color:var(--red)">Datei konnte nicht gelesen werden.</p>';
     };
 
-    reader.readAsText(file);
+    if (isZip) {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsText(file);
+    }
   });
 }
 

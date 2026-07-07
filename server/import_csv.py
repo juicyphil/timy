@@ -1,5 +1,7 @@
 import csv
 import io
+import re
+import zipfile
 
 TYPE_NAMES_REVERSE = {
     "Urlaub": "vacation",
@@ -9,6 +11,35 @@ TYPE_NAMES_REVERSE = {
     "Überstunden Abbau": "ueberstunden_abbau",
     "Sonstige": "other"
 }
+
+def _split_sections(content):
+    lines = content.split("\n")
+    sections = {}
+    current_section = None
+    current_lines = []
+
+    for line in lines:
+        m = re.match(r'^=== (.+) ===\s*$', line.strip())
+        if m:
+            if current_section:
+                sections[current_section] = "\n".join(current_lines)
+            current_section = m.group(1)
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_section:
+        sections[current_section] = "\n".join(current_lines)
+
+    return sections
+
+def _try_read_zip(raw_bytes):
+    try:
+        buf = io.BytesIO(raw_bytes)
+        with zipfile.ZipFile(buf, "r") as zf:
+            return {name: zf.read(name).decode("utf-8-sig") for name in zf.namelist()}
+    except Exception:
+        return None
 
 def import_times_csv(conn, content, user_id):
     reader = csv.DictReader(io.StringIO(content))
@@ -64,3 +95,36 @@ def import_absences_csv(conn, content, user_id):
         )
         imported += 1
     return imported
+
+def import_all(conn, raw_bytes, user_id):
+    result = {}
+
+    zip_content = _try_read_zip(raw_bytes)
+    if zip_content:
+        for name, data in zip_content.items():
+            lower = name.lower()
+            if "zeit" in lower:
+                result["times_imported"] = import_times_csv(conn, data, user_id)
+            elif "abwesen" in lower or "absence" in lower:
+                result["absences_imported"] = import_absences_csv(conn, data, user_id)
+        return result
+
+    content = raw_bytes.decode("utf-8-sig")
+    sections = _split_sections(content)
+    if sections:
+        if "Zeiten" in sections:
+            result["times_imported"] = import_times_csv(conn, sections["Zeiten"], user_id)
+        if "Abwesenheiten" in sections:
+            result["absences_imported"] = import_absences_csv(conn, sections["Abwesenheiten"], user_id)
+        return result
+
+    reader = csv.DictReader(io.StringIO(content))
+    if not reader.fieldnames:
+        return result
+    headers = [h.strip() for h in reader.fieldnames]
+    if "Datum" in headers:
+        result["times_imported"] = import_times_csv(conn, content, user_id)
+    if "Typ" in headers:
+        result["absences_imported"] = import_absences_csv(conn, content, user_id)
+
+    return result

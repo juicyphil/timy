@@ -15,8 +15,8 @@ from .calc import (
     get_absence_dates_set, get_absence_info_by_date, get_adjusted_target_for_month,
     get_working_days_in_month, get_cumulative_overtime, DAYS
 )
-from .export import export_times_csv, export_absences_csv
-from .import_csv import import_times_csv, import_absences_csv
+from .export import export_times_csv, export_absences_csv, export_all_zip
+from .import_csv import import_times_csv, import_absences_csv, import_all
 
 app = FastAPI(title="timy")
 
@@ -729,21 +729,22 @@ def import_csv(
     type: str = Query("all"),
     uid: int = Query(1)
 ):
-    if not file.filename or not file.filename.endswith(".csv"):
-        raise HTTPException(400, "Nur CSV-Dateien werden unterstützt")
+    if not file.filename or not (file.filename.endswith(".csv") or file.filename.endswith(".zip")):
+        raise HTTPException(400, "Nur CSV- oder ZIP-Dateien werden unterstützt")
 
-    content = file.file.read().decode("utf-8-sig")
+    raw = file.file.read()
     conn = get_connection()
     result = {}
 
     try:
-        if type in ("time", "all"):
-            count = import_times_csv(conn, content, uid)
-            result["times_imported"] = count
-
-        if type in ("absence", "all"):
-            count = import_absences_csv(conn, content, uid)
-            result["absences_imported"] = count
+        if type == "all":
+            result = import_all(conn, raw, uid)
+        elif type == "time":
+            content = raw.decode("utf-8-sig")
+            result["times_imported"] = import_times_csv(conn, content, uid)
+        elif type == "absence":
+            content = raw.decode("utf-8-sig")
+            result["absences_imported"] = import_absences_csv(conn, content, uid)
 
         conn.commit()
     except Exception as e:
@@ -764,28 +765,49 @@ def export_csv(
     uid: int = Query(1)
 ):
     conn = get_connection()
-    parts = []
 
-    if type in ("time", "all"):
+    if type == "all":
         entries = conn.execute(
             "SELECT * FROM time_entries WHERE date BETWEEN ? AND ? AND user_id=? ORDER BY date",
             (from_date, to_date, uid)
         ).fetchall()
-        parts.append("=== Zeiten ===")
-        parts.append(export_times_csv([dict(e) for e in entries]))
-
-    if type in ("absence", "all"):
         absences = conn.execute(
             "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND user_id=? ORDER BY start_date",
             (to_date, from_date, uid)
         ).fetchall()
-        parts.append("=== Abwesenheiten ===")
-        parts.append(export_absences_csv([dict(a) for a in absences]))
+        conn.close()
+        zip_data = export_all_zip([dict(e) for e in entries], [dict(a) for a in absences])
+        return Response(
+            content=zip_data,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=timy_export_{from_date}_{to_date}.zip"}
+        )
+
+    if type == "time":
+        entries = conn.execute(
+            "SELECT * FROM time_entries WHERE date BETWEEN ? AND ? AND user_id=? ORDER BY date",
+            (from_date, to_date, uid)
+        ).fetchall()
+        conn.close()
+        content = export_times_csv([dict(e) for e in entries])
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=timy_zeiten_{from_date}_{to_date}.csv"}
+        )
+
+    if type == "absence":
+        absences = conn.execute(
+            "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? AND user_id=? ORDER BY start_date",
+            (to_date, from_date, uid)
+        ).fetchall()
+        conn.close()
+        content = export_absences_csv([dict(a) for a in absences])
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=timy_abwesenheiten_{from_date}_{to_date}.csv"}
+        )
 
     conn.close()
-    content = "\n".join(parts)
-    return Response(
-        content=content,
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=timy_export_{from_date}_{to_date}.csv"}
-    )
+    raise HTTPException(400, "Ungültiger Export-Typ")

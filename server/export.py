@@ -1,5 +1,6 @@
 import csv
 import io
+import zipfile
 
 from .calc import format_minutes, calc_working_minutes
 
@@ -42,3 +43,10 @@ def export_absences_csv(absences):
             a.get("note") or ""
         ])
     return output.getvalue()
+
+def export_all_zip(entries, absences):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("zeiten.csv", export_times_csv(entries))
+        zf.writestr("abwesenheiten.csv", export_absences_csv(absences))
+    return buf.getvalue()
